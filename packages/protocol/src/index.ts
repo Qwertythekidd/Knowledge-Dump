@@ -6,12 +6,27 @@ export interface Account {
   email: string;
   displayName: string;
   plan: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface Device {
+  id: string;
+  label: string;
+  platform: string;
+  status: "active" | "revoked";
+  createdAt: string;
+  lastSeenAt: string;
+  revokedAt: string | null;
 }
 
 export interface SessionResponse {
   account: Account;
+  device: Device;
   accessToken: string;
+  refreshToken: string;
   expiresAt: string;
+  refreshExpiresAt: string;
 }
 
 export interface StorageHealth {
@@ -25,6 +40,9 @@ export interface StorageHealth {
   checkedAt: string;
   usedBytes: number;
   quotaBytes: number;
+  usedObjects: number;
+  quotaObjects: number;
+  database: "sqlite" | "postgresql";
 }
 
 export interface CloudFile {
@@ -44,6 +62,20 @@ export interface ActivityEvent {
   id: string;
   action: string;
   targetName: string;
+  targetType: string;
+  targetId: string | null;
+  actorDeviceId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface FileVersion {
+  id: string;
+  fileId: string;
+  version: number;
+  sizeBytes: number;
+  objectKey: string | null;
+  metadata: Record<string, unknown>;
   createdAt: string;
 }
 

@@ -27,8 +27,9 @@ enforcement. It never proxies large object bytes in production. Upload and
 download data moves between the desktop and object storage using short-lived
 presigned URLs.
 
-The V1 mock uses SQLite and local placeholder objects. Its routes intentionally
-match the planned production contract.
+The account and catalog schema runs on PostgreSQL in deployment and SQLite in
+local development. Only the object-byte adapter remains mocked: its routes
+intentionally match the planned presigned-transfer contract.
 
 ## Object storage
 

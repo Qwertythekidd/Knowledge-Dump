@@ -14,7 +14,7 @@
     "build:native": "cargo build --manifest-path apps/desktop-native/Cargo.toml --release",
     "build:deb": "bash packaging/debian/build-deb.sh",
     "typecheck": "npm run typecheck --workspace @knowledge-dump/protocol && npm run typecheck --workspace @knowledge-dump/desktop-ui",
-    "test:gateway": "python3 -m unittest discover -s apps/gateway/tests -v",
+    "test:gateway": "bash scripts/python.sh -m unittest discover -s apps/gateway/tests -v",
     "check": "bash scripts/check.sh"
   },
   "devDependencies": {

@@ -6,7 +6,7 @@ cd -- "$PROJECT_ROOT"
 
 npm run typecheck
 npm run build
-python3 -m unittest discover -s apps/gateway/tests -v
-python3 -m compileall -q apps/gateway
+"$PROJECT_ROOT/scripts/python.sh" -m unittest discover -s apps/gateway/tests -v
+"$PROJECT_ROOT/scripts/python.sh" -m compileall -q apps/gateway
 
 printf '%s\n' 'Knowledge Dump checks passed.'

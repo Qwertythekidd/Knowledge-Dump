@@ -9,7 +9,7 @@ Build on Ubuntu 24.04 with the Tauri/WebKitGTK development dependencies:
 ```bash
 sudo apt install build-essential curl file libssl-dev libwebkit2gtk-4.1-dev \
   libappindicator3-dev librsvg2-dev patchelf
-npm install
+npm ci
 bash packaging/debian/build-deb.sh
 ```
 

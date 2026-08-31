@@ -13,6 +13,6 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cd -- "$PROJECT_ROOT"
-python3 -m apps.gateway.knowledge_dump_gateway &
+"$PROJECT_ROOT/scripts/python.sh" -m apps.gateway.knowledge_dump_gateway &
 GATEWAY_PID="$!"
 npm run dev:ui

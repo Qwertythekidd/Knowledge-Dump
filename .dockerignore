@@ -1,0 +1,8 @@
+.git
+.venv
+node_modules
+target
+dist
+__pycache__
+*.pyc
+*.db

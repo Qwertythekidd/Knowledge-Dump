@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: knowledge_dump
+      POSTGRES_USER: knowledge_dump
+      POSTGRES_PASSWORD: ${KNOWLEDGE_DUMP_POSTGRES_PASSWORD:?set KNOWLEDGE_DUMP_POSTGRES_PASSWORD}
+    volumes:
+      - knowledge_dump_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowledge_dump -d knowledge_dump"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: infra/gateway/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KNOWLEDGE_DUMP_MODE: production
+      KNOWLEDGE_DUMP_DATABASE_URL: postgresql+psycopg://knowledge_dump:${KNOWLEDGE_DUMP_POSTGRES_PASSWORD}@postgres:5432/knowledge_dump
+      KNOWLEDGE_DUMP_TOKEN_PEPPER: ${KNOWLEDGE_DUMP_TOKEN_PEPPER:?set KNOWLEDGE_DUMP_TOKEN_PEPPER}
+      KNOWLEDGE_DUMP_BOOTSTRAP_DEMO_ACCOUNT: "false"
+      KNOWLEDGE_DUMP_ALLOWED_ORIGINS: ${KNOWLEDGE_DUMP_ALLOWED_ORIGINS:?set KNOWLEDGE_DUMP_ALLOWED_ORIGINS}
+      KNOWLEDGE_DUMP_STORAGE_PROVIDER: ${KNOWLEDGE_DUMP_STORAGE_PROVIDER:-mock}
+    ports:
+      - "127.0.0.1:8787:8787"
+
+volumes:
+  knowledge_dump_postgres:

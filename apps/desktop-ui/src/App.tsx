@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { Account, ActivityEvent, CloudFile, StorageHealth } from "@knowledge-dump/protocol";
+import type { Account, ActivityEvent, CloudFile, Device, StorageHealth } from "@knowledge-dump/protocol";
 
 import {
   activity as getActivity,
   createFolder,
   currentGatewayUrl,
+  devices as getDevices,
   downloadFile,
   files as getFiles,
   login,
@@ -12,6 +13,7 @@ import {
   purgeFile,
   registerUpload,
   renameFile,
+  revokeDevice,
   savedToken,
   saveGatewayUrl,
   session,
@@ -49,8 +51,6 @@ interface Transfer {
   error?: string;
 }
 
-const DEMO_EMAIL = "demo@knowledge-dump.local";
-
 export default function App() {
   const [account, setAccount] = useState<Account | null>(null);
   const [booting, setBooting] = useState(true);
@@ -84,7 +84,7 @@ export default function App() {
         setAccount(sessionAccount);
         setHealth(storage);
       })
-      .catch(() => window.sessionStorage.removeItem("knowledge-dump.session-token"))
+      .catch(() => { void logout(); })
       .finally(() => active && setBooting(false));
     return () => { active = false; };
   }, []);
@@ -275,8 +275,8 @@ export default function App() {
 }
 
 function LoginScreen({ onAuthenticated }: { onAuthenticated: (account: Account, health: StorageHealth) => void }) {
-  const [email, setEmail] = useState(DEMO_EMAIL);
-  const [password, setPassword] = useState("knowledge");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [gateway, setGateway] = useState(currentGatewayUrl());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -311,7 +311,7 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: (account: Account, 
         <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label>
         <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>
         <button className="primary wide" disabled={busy}>{busy ? "Authenticating…" : "Sign in to Knowledge Dump"}</button>
-        <small>Mock account: {DEMO_EMAIL} / knowledge</small>
+        <small>Accounts are provisioned by the Knowledge Dump gateway operator.</small>
       </form>
     </section>
   </main>;
@@ -388,13 +388,45 @@ function ActivityView({ events }: { events: ActivityEvent[] }) {
 }
 
 function SettingsView({ health, busy, onRefresh }: { health: StorageHealth | null; busy: boolean; onRefresh: () => void }) {
+  const [deviceList, setDeviceList] = useState<Device[]>([]);
+  const [currentDeviceId, setCurrentDeviceId] = useState("");
+  const [deviceError, setDeviceError] = useState("");
+  const [revoking, setRevoking] = useState("");
+  useEffect(() => {
+    void refreshDevices();
+  }, []);
+
+  async function refreshDevices() {
+    try {
+      const result = await getDevices();
+      setDeviceList(result.devices);
+      setCurrentDeviceId(result.currentDeviceId);
+      setDeviceError("");
+    } catch (reason) {
+      setDeviceError(humanError(messageFor(reason)));
+    }
+  }
+
+  async function handleRevoke(device: Device) {
+    if (!window.confirm(`Revoke “${device.label}”? It will need to sign in again.`)) return;
+    setRevoking(device.id);
+    try {
+      await revokeDevice(device.id);
+      await refreshDevices();
+    } catch (reason) {
+      setDeviceError(humanError(messageFor(reason)));
+    } finally {
+      setRevoking("");
+    }
+  }
+
   const checks = [
     ["Gateway API", health?.gateway === "healthy", "Account and metadata service"],
     ["User session", health?.authenticated, "Bearer session accepted"],
     ["Object listing", health?.readAccess, "Storage read capability"],
     ["Object writes", health?.writeAccess, "Storage upload capability"],
   ] as const;
-  return <section className="content-view"><div className="view-heading"><div><p className="eyebrow">Independent infrastructure</p><h1>Connection</h1></div><button className="primary" disabled={busy} onClick={onRefresh}>{busy ? "Checking…" : "Run health check"}</button></div><div className="settings-grid"><article className="connection-card"><div className="provider-mark">DO</div><div><p className="eyebrow">Configured storage adapter</p><h2>{health?.provider === "mock" ? "Local mock object store" : "DigitalOcean Spaces"}</h2><p>The production adapter will issue short-lived presigned requests. Provider credentials stay on the Knowledge Dump Gateway.</p></div><span className={`large-status ${health?.providerReachable ? "healthy" : "offline"}`}>{health?.providerReachable ? "Healthy" : "Unavailable"}</span></article><article className="health-checks"><div className="section-heading"><h3>Service checks</h3><span>{health ? `${health.latencyMs} ms` : "Not checked"}</span></div>{checks.map(([label, passing, detail]) => <div className="health-row" key={label}><span className={passing ? "pass" : "fail"}>{passing ? <CheckIcon /> : <CloseIcon />}</span><div><strong>{label}</strong><p>{detail}</p></div><i>{passing ? "Ready" : "Check"}</i></div>)}</article><article className="xdg-card"><p className="eyebrow">Ubuntu workstation contract</p><h3>XDG-native local state</h3><code>$XDG_CONFIG_HOME/knowledge-dump</code><code>$XDG_DATA_HOME/knowledge-dump</code><code>$XDG_CACHE_HOME/knowledge-dump</code><code>$XDG_STATE_HOME/knowledge-dump</code><p>Authentication secrets move to the Ubuntu keyring in the production client.</p></article></div></section>;
+  return <section className="content-view"><div className="view-heading"><div><p className="eyebrow">Independent infrastructure</p><h1>Connection</h1></div><button className="primary" disabled={busy} onClick={onRefresh}>{busy ? "Checking…" : "Run health check"}</button></div><div className="settings-grid"><article className="connection-card"><div className="provider-mark">DO</div><div><p className="eyebrow">Configured storage adapter</p><h2>{health?.provider === "mock" ? "Local mock object store" : "DigitalOcean Spaces"}</h2><p>The production adapter will issue short-lived presigned requests. Provider credentials stay on the Knowledge Dump Gateway.</p></div><span className={`large-status ${health?.providerReachable ? "healthy" : "offline"}`}>{health?.providerReachable ? "Healthy" : "Unavailable"}</span></article><article className="health-checks"><div className="section-heading"><h3>Service checks</h3><span>{health ? `${health.latencyMs} ms` : "Not checked"}</span></div>{checks.map(([label, passing, detail]) => <div className="health-row" key={label}><span className={passing ? "pass" : "fail"}>{passing ? <CheckIcon /> : <CloseIcon />}</span><div><strong>{label}</strong><p>{detail}</p></div><i>{passing ? "Ready" : "Check"}</i></div>)}</article><article className="xdg-card"><p className="eyebrow">Ubuntu workstation contract</p><h3>XDG-native local state</h3><code>$XDG_CONFIG_HOME/knowledge-dump</code><code>$XDG_DATA_HOME/knowledge-dump</code><code>$XDG_CACHE_HOME/knowledge-dump</code><code>$XDG_STATE_HOME/knowledge-dump</code><p>Refresh tokens move to the Ubuntu keyring before production desktop release.</p></article><article className="device-card"><div className="section-heading"><div><p className="eyebrow">Account security</p><h3>Authorized workstations</h3></div><span>{deviceList.filter((device) => device.status === "active").length} active</span></div>{deviceError ? <p className="inline-error">{deviceError}</p> : null}<div className="device-list">{deviceList.map((device) => <div className="device-row" key={device.id}><div className={`device-mark ${device.status}`}><CloudIcon /></div><div><strong>{device.label}</strong><p>{device.platform} · Last used {relativeTime(device.lastSeenAt)}</p></div><span>{device.id === currentDeviceId ? "This device" : device.status}</span><button className="secondary" disabled={device.id === currentDeviceId || device.status !== "active" || revoking === device.id} onClick={() => { void handleRevoke(device); }}>{revoking === device.id ? "Revoking…" : "Revoke"}</button></div>)}</div></article></div></section>;
 }
 
 function NewFolderModal({ parentId, onClose, onCreated }: { parentId: string | null; onClose: () => void; onCreated: () => void }) {
@@ -447,6 +479,9 @@ function humanError(value: string): string {
   const known: Record<string, string> = {
     credentials_invalid: "That email and password were not accepted.",
     authentication_required: "Your session expired. Sign in again.",
+    refresh_token_invalid: "Your session expired. Sign in again.",
+    device_revoked: "This workstation was revoked. Clear its local device registration before signing in again.",
+    quota_bytes_exceeded: "This upload exceeds the workspace storage quota.",
     folder_not_empty: "Move or remove the files in this folder first.",
     Failed_to_fetch: "The Knowledge Dump Gateway could not be reached.",
   };

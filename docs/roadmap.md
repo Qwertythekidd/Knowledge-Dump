@@ -10,12 +10,13 @@ unfinished security and storage work explicit.
 - XDG filesystem contract and Debian packaging;
 - functional SQLite-backed mock gateway and integration tests.
 
-## Phase 2: account and catalog gateway - interface mocked
+## Phase 2: account and catalog gateway - implemented
 
-Replace the demo account and bearer sessions with PostgreSQL-backed accounts,
-password hashing, device registration, refresh-token rotation, quota records,
-virtual paths, object versions, and durable audit events. The existing login,
-library, activity, and health surfaces are the client contract for this work.
+The gateway now supports PostgreSQL and SQLite through one schema, Argon2id
+password hashing, HMAC-hashed rotating sessions, device registration and
+revocation, account quotas, account-scoped virtual paths, immutable metadata
+versions, and durable audit events. Demo bootstrap is development-only and
+production accounts are operator-provisioned.
 
 ## Phase 3: DigitalOcean Spaces transfers - adapter prepared
 

@@ -154,6 +154,17 @@ h1, h2, h3 { margin: 0; font-family: Manrope, sans-serif; letter-spacing: -.035e
 .xdg-card { background: var(--cream) !important; }
 .xdg-card code { display: block; margin-top: 8px; padding: 8px; border-radius: 6px; background: rgba(255,255,255,.65); color: #4b5b52; font-size: 10px; }
 .xdg-card > p:last-child { color: #738078; font-size: 10px; line-height: 1.5; }
+.device-card { grid-column: 1 / -1; }
+.device-card .section-heading { align-items: flex-end; }
+.device-card .section-heading h3 { font-size: 20px; }
+.device-list { display: grid; border-top: 1px solid #edf0ed; }
+.device-row { display: grid; grid-template-columns: 38px minmax(180px, 1fr) 90px 82px; gap: 12px; align-items: center; min-height: 67px; border-bottom: 1px solid #edf0ed; }
+.device-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: var(--green); background: #eaf1eb; }
+.device-mark.revoked { color: #8c756f; background: #f4e8e4; }
+.device-row strong { display: block; font-size: 12px; }
+.device-row p { margin: 4px 0 0; color: #89958e; font-size: 10px; }
+.device-row > span { color: #78857d; font-size: 10px; text-transform: capitalize; }
+.device-row .secondary { min-height: 32px; padding: 6px 10px; }
 
 .login-screen { display: grid; grid-template-columns: 1.1fr .9fr; min-height: 100vh; background: var(--paper); }
 .login-story { position: relative; display: flex; flex-direction: column; overflow: hidden; padding: 45px clamp(38px, 6vw, 85px); color: white; background: var(--green); }
@@ -207,6 +218,9 @@ label input { min-height: 42px; padding: 10px 11px; border: 1px solid #d5ddd6; b
   .settings-grid { grid-template-columns: 1fr; }
   .connection-card { flex-wrap: wrap; }
   .large-status { margin-left: 0; }
+  .device-row { grid-template-columns: 38px minmax(145px, 1fr) 74px; padding: 9px 0; }
+  .device-row > span { text-align: right; }
+  .device-row .secondary { grid-column: 2 / -1; justify-self: end; }
   .login-screen { grid-template-columns: 1fr; }
   .login-story { min-height: 320px; padding: 28px; }
   .story-copy { margin: auto 0 25px; }
