@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Knowledge Dump",
+  "version": "0.1.0",
+  "identifier": "com.fontainetech.knowledge-dump",
+  "build": {
+    "beforeBuildCommand": "npm run build --workspace @knowledge-dump/desktop-ui",
+    "beforeDevCommand": "npm run dev --workspace @knowledge-dump/desktop-ui",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../desktop-ui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Knowledge Dump",
+        "width": 1380,
+        "height": 860,
+        "minWidth": 760,
+        "minHeight": 580,
+        "center": true,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* https:; img-src 'self' asset: data: blob:; font-src 'self' https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

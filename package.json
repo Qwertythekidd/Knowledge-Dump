@@ -1,0 +1,23 @@
+{
+  "name": "knowledge-dump",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/desktop-ui",
+    "packages/protocol"
+  ],
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "dev:ui": "npm run dev --workspace @knowledge-dump/desktop-ui",
+    "dev:native": "tauri dev --config apps/desktop-native/tauri.conf.json",
+    "build": "npm run build --workspace @knowledge-dump/protocol && npm run build --workspace @knowledge-dump/desktop-ui",
+    "build:native": "cargo build --manifest-path apps/desktop-native/Cargo.toml --release",
+    "build:deb": "bash packaging/debian/build-deb.sh",
+    "typecheck": "npm run typecheck --workspace @knowledge-dump/protocol && npm run typecheck --workspace @knowledge-dump/desktop-ui",
+    "test:gateway": "python3 -m unittest discover -s apps/gateway/tests -v",
+    "check": "bash scripts/check.sh"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.5"
+  }
+}

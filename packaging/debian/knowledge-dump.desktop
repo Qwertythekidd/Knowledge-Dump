@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Knowledge Dump
+Comment=Private cloud workspace for Ubuntu
+Exec=/usr/bin/knowledge-dump
+Icon=knowledge-dump
+Terminal=false
+Type=Application
+Categories=Utility;FileTransfer;Network;
+StartupNotify=true
+Keywords=cloud;files;storage;backup;

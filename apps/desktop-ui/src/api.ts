@@ -1,0 +1,145 @@
+import type { Account, ActivityEvent, CloudFile, SessionResponse, StorageHealth } from "@knowledge-dump/protocol";
+
+const TOKEN_KEY = "knowledge-dump.session-token";
+const GATEWAY_KEY = "knowledge-dump.gateway-url";
+
+function gatewayBase(): string {
+  return (window.localStorage.getItem(GATEWAY_KEY) || import.meta.env.VITE_KNOWLEDGE_DUMP_GATEWAY_URL || "/api").replace(/\/$/, "");
+}
+
+function token(): string {
+  return window.sessionStorage.getItem(TOKEN_KEY) || "";
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${gatewayBase()}${path}`, {
+    ...init,
+    headers: {
+      Accept: "application/json",
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(token() ? { Authorization: `Bearer ${token()}` } : {}),
+      ...(init?.headers || {}),
+    },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
+  return body as T;
+}
+
+export function savedToken(): string {
+  return token();
+}
+
+export function saveGatewayUrl(value: string): void {
+  const normalized = value.trim().replace(/\/$/, "");
+  if (normalized) window.localStorage.setItem(GATEWAY_KEY, normalized);
+  else window.localStorage.removeItem(GATEWAY_KEY);
+}
+
+export function currentGatewayUrl(): string {
+  return gatewayBase();
+}
+
+export async function login(email: string, password: string): Promise<SessionResponse> {
+  const result = await request<SessionResponse>("/v1/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  window.sessionStorage.setItem(TOKEN_KEY, result.accessToken);
+  return result;
+}
+
+export async function session(): Promise<Account> {
+  const result = await request<{ account: Account }>("/v1/auth/session");
+  return result.account;
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await request("/v1/auth/logout", { method: "POST", body: JSON.stringify({}) });
+  } finally {
+    window.sessionStorage.removeItem(TOKEN_KEY);
+  }
+}
+
+export async function storageHealth(): Promise<StorageHealth> {
+  return request<StorageHealth>("/v1/storage/health");
+}
+
+export async function files(parentId: string | null, status = "active", search = ""): Promise<CloudFile[]> {
+  const params = new URLSearchParams({ status });
+  if (parentId) params.set("parentId", parentId);
+  if (search.trim()) params.set("search", search.trim());
+  const result = await request<{ files: CloudFile[] }>(`/v1/files?${params}`);
+  return result.files;
+}
+
+export async function createFolder(name: string, parentId: string | null): Promise<CloudFile> {
+  const result = await request<{ file: CloudFile }>("/v1/folders", {
+    method: "POST",
+    body: JSON.stringify({ name, parentId }),
+  });
+  return result.file;
+}
+
+export async function registerUpload(file: File, parentId: string | null): Promise<CloudFile> {
+  const result = await request<{ file: CloudFile }>("/v1/files", {
+    method: "POST",
+    body: JSON.stringify({
+      name: file.name,
+      parentId,
+      kind: kindForFile(file),
+      mimeType: file.type || null,
+      sizeBytes: file.size,
+    }),
+  });
+  return result.file;
+}
+
+export async function renameFile(fileId: string, name: string): Promise<CloudFile> {
+  const result = await request<{ file: CloudFile }>(`/v1/files/${encodeURIComponent(fileId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+  return result.file;
+}
+
+export async function setArchived(fileId: string, archived: boolean): Promise<CloudFile> {
+  const result = await request<{ file: CloudFile }>(`/v1/files/${encodeURIComponent(fileId)}/${archived ? "archive" : "restore"}`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return result.file;
+}
+
+export async function purgeFile(fileId: string): Promise<void> {
+  await request(`/v1/files/${encodeURIComponent(fileId)}`, { method: "DELETE" });
+}
+
+export async function activity(): Promise<ActivityEvent[]> {
+  const result = await request<{ activity: ActivityEvent[] }>("/v1/activity");
+  return result.activity;
+}
+
+export async function downloadFile(file: CloudFile): Promise<void> {
+  const response = await fetch(`${gatewayBase()}/v1/files/${encodeURIComponent(file.id)}/download`, {
+    headers: { Authorization: `Bearer ${token()}` },
+  });
+  if (!response.ok) throw new Error("download_failed");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = file.name;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function kindForFile(file: File): CloudFile["kind"] {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("audio/")) return "audio";
+  if (/\.(zip|tar|gz|7z)$/i.test(file.name)) return "archive";
+  if (file.type.startsWith("text/") || /\.(pdf|md|json|jsonl|docx?|xlsx?)$/i.test(file.name)) return "document";
+  return "other";
+}
