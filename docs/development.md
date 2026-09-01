@@ -25,6 +25,9 @@ isolated instance without changing your normal user state:
 KNOWLEDGE_DUMP_DATA_HOME=/tmp/knowledge-dump-dev-data npm run dev
 ```
 
+Parallel checkouts can override `KNOWLEDGE_DUMP_GATEWAY_PORT`,
+`KNOWLEDGE_DUMP_GATEWAY_DEV_URL`, and `VITE_DEV_PORT` to avoid port collisions.
+
 ## Native loop
 
 Install the Ubuntu WebKitGTK and Tauri build dependencies, build the UI, then
@@ -42,10 +45,11 @@ The shell currently loads the Vite development URL when
 
 ## Current limitations
 
-The development storage adapter does not upload source file bytes. It records
-versioned file metadata, simulates transfer progress, and returns generated
-placeholder downloads. PostgreSQL deployment, password hashing, refresh-token
-rotation, device revocation, account isolation, quotas, and audit events are
-implemented. Email verification, object encryption, presigned multipart
-transfers, content conflict resolution, and system keyring storage remain later
-phases behind the same interfaces.
+The development storage adapter writes real multipart bytes beneath the XDG
+data root. It exercises part grants, ETag checkpoints, resume, provider
+verification, range downloads, abort, and purge without requiring a DigitalOcean
+account. DigitalOcean Spaces uses the same API with direct presigned transfers.
+
+Content encryption, conflict resolution, and system-keyring storage remain
+later work. Do not use the current build for secrets or sensitive production
+data.

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { Account, ActivityEvent, CloudFile, Device, StorageHealth } from "@knowledge-dump/protocol";
+import type { Account, ActivityEvent, CloudFile, Device, StorageHealth, UploadSession } from "@knowledge-dump/protocol";
 
 import {
   activity as getActivity,
+  abortUpload,
   createFolder,
   currentGatewayUrl,
   devices as getDevices,
@@ -11,7 +12,6 @@ import {
   login,
   logout,
   purgeFile,
-  registerUpload,
   renameFile,
   revokeDevice,
   savedToken,
@@ -19,6 +19,7 @@ import {
   session,
   setArchived,
   storageHealth,
+  uploadFile,
 } from "./api";
 import {
   ActivityIcon,
@@ -40,7 +41,7 @@ import {
 
 type View = "files" | "recent" | "archived" | "transfers" | "settings";
 type DisplayMode = "grid" | "list";
-type TransferStatus = "queued" | "uploading" | "completed" | "failed";
+type TransferStatus = "queued" | "preparing" | "uploading" | "verifying" | "completed" | "failed" | "cancelled";
 
 interface Transfer {
   id: string;
@@ -48,7 +49,11 @@ interface Transfer {
   size: number;
   progress: number;
   status: TransferStatus;
+  file: File;
+  parentId: string | null;
+  sessionId?: string;
   error?: string;
+  errorCode?: string;
 }
 
 export default function App() {
@@ -68,6 +73,8 @@ export default function App() {
   const [menuFileId, setMenuFileId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
+  const transferControllers = useRef(new Map<string, AbortController>());
+  const transferSessions = useRef(new Map<string, string>());
 
   const currentFolder = folderTrail.at(-1) || null;
   const currentStatus = view === "archived" ? "archived" : "active";
@@ -141,24 +148,69 @@ export default function App() {
       size: file.size,
       progress: 0,
       status: "queued",
+      file,
+      parentId: currentFolder?.id || null,
     }));
     setTransfers((current) => [...queue, ...current]);
 
     for (let index = 0; index < selected.length; index += 1) {
-      const file = selected[index];
       const transfer = queue[index];
-      updateTransfer(transfer.id, { status: "uploading", progress: 8 });
+      await runTransfer(transfer);
+    }
+    await Promise.all([refreshFiles(), refreshHealth()]);
+  }
+
+  async function runTransfer(transfer: Transfer, resume = false) {
+    const controller = new AbortController();
+    transferControllers.current.set(transfer.id, controller);
+    updateTransfer(transfer.id, { status: "preparing", error: undefined, errorCode: undefined, progress: resume ? transfer.progress : 2 });
+    try {
+      await uploadFile(
+        transfer.file,
+        transfer.parentId,
+        (progress) => updateTransfer(transfer.id, { status: progress >= 95 ? "verifying" : "uploading", progress }),
+        (upload: UploadSession) => {
+          transferSessions.current.set(transfer.id, upload.id);
+          updateTransfer(transfer.id, { sessionId: upload.id });
+        },
+        controller.signal,
+        resume ? transfer.sessionId : undefined,
+      );
+      updateTransfer(transfer.id, { status: "completed", progress: 100 });
+    } catch (reason) {
+      const cancelled = controller.signal.aborted;
+      const errorCode = messageFor(reason);
+      updateTransfer(transfer.id, {
+        status: cancelled ? "cancelled" : "failed",
+        error: cancelled ? "Transfer cancelled" : humanError(errorCode),
+        errorCode: cancelled ? "upload_cancelled" : errorCode,
+      });
+    } finally {
+      transferControllers.current.delete(transfer.id);
+    }
+  }
+
+  async function cancelTransfer(transfer: Transfer) {
+    transferControllers.current.get(transfer.id)?.abort();
+    const sessionId = transferSessions.current.get(transfer.id) || transfer.sessionId;
+    if (sessionId) {
       try {
-        for (const progress of [22, 41, 64, 82]) {
-          await delay(90);
-          updateTransfer(transfer.id, { progress });
-        }
-        await registerUpload(file, currentFolder?.id || null);
-        updateTransfer(transfer.id, { status: "completed", progress: 100 });
+        await abortUpload(sessionId);
       } catch (reason) {
-        updateTransfer(transfer.id, { status: "failed", error: messageFor(reason) });
+        const errorCode = messageFor(reason);
+        updateTransfer(transfer.id, { status: "failed", error: humanError(errorCode), errorCode });
       }
     }
+  }
+
+  async function retryTransfer(transfer: Transfer) {
+    const restartErrors = new Set(["upload_expired", "upload_not_active", "upload_source_mismatch"]);
+    const resume = transfer.status === "failed" && Boolean(transfer.sessionId) && !restartErrors.has(transfer.errorCode || "");
+    if (!resume) {
+      transferSessions.current.delete(transfer.id);
+      updateTransfer(transfer.id, { sessionId: undefined, progress: 0 });
+    }
+    await runTransfer(transfer, resume);
     await Promise.all([refreshFiles(), refreshHealth()]);
   }
 
@@ -230,7 +282,7 @@ export default function App() {
         {view === "settings" ? (
           <SettingsView health={health} busy={healthBusy} onRefresh={refreshHealth} />
         ) : view === "transfers" ? (
-          <TransfersView transfers={transfers} />
+          <TransfersView transfers={transfers} onCancel={cancelTransfer} onRetry={retryTransfer} />
         ) : view === "recent" ? (
           <ActivityView events={events} />
         ) : (
@@ -264,7 +316,7 @@ export default function App() {
         <div className="rail-storage">
           <div><span>Storage</span><strong>{health ? formatBytes(health.usedBytes) : "—"}</strong></div>
           <div className="storage-bar"><span style={{ width: health ? `${Math.max(2, Math.min(100, health.usedBytes / health.quotaBytes * 100))}%` : "0%" }} /></div>
-          <small>{health ? `${formatBytes(health.quotaBytes)} available in development` : "Health check required"}</small>
+          <small>{health ? `${formatBytes(health.usedBytes)} of ${formatBytes(health.quotaBytes)} used` : "Health check required"}</small>
         </div>
       </aside>
 
@@ -379,8 +431,8 @@ function FileKindIcon({ item }: { item: CloudFile }) {
   return <FileIcon />;
 }
 
-function TransfersView({ transfers }: { transfers: Transfer[] }) {
-  return <section className="content-view"><div className="view-heading"><div><p className="eyebrow">Local transfer queue</p><h1>Transfers</h1></div></div><div className="transfer-list">{transfers.map((transfer) => <article key={transfer.id}><div className={`transfer-icon ${transfer.status}`}>{transfer.status === "completed" ? <CheckIcon /> : <UploadIcon />}</div><div className="transfer-copy"><div><strong>{transfer.name}</strong><span>{transfer.status}</span></div><div className="transfer-track"><span style={{ width: `${transfer.progress}%` }} /></div><small>{formatBytes(transfer.size)}{transfer.error ? ` · ${transfer.error}` : ` · ${transfer.progress}%`}</small></div></article>)}{!transfers.length ? <div className="empty-state compact"><UploadIcon /><h3>No transfers yet</h3><p>Uploads and downloads will appear here with resumable progress.</p></div> : null}</div></section>;
+function TransfersView({ transfers, onCancel, onRetry }: { transfers: Transfer[]; onCancel: (transfer: Transfer) => Promise<void>; onRetry: (transfer: Transfer) => Promise<void> }) {
+  return <section className="content-view"><div className="view-heading"><div><p className="eyebrow">Resumable multipart queue</p><h1>Transfers</h1></div></div><div className="transfer-list">{transfers.map((transfer) => <article key={transfer.id}><div className={`transfer-icon ${transfer.status}`}>{transfer.status === "completed" ? <CheckIcon /> : <UploadIcon />}</div><div className="transfer-copy"><div><strong>{transfer.name}</strong><span>{transfer.status}</span></div><div className="transfer-track"><span style={{ width: `${transfer.progress}%` }} /></div><small>{formatBytes(transfer.size)}{transfer.error ? ` · ${transfer.error}` : ` · ${transfer.progress}%`}</small></div><div className="transfer-actions">{["preparing", "uploading", "verifying"].includes(transfer.status) ? <button className="secondary" onClick={() => { void onCancel(transfer); }}>Cancel</button> : null}{["failed", "cancelled"].includes(transfer.status) ? <button className="secondary" onClick={() => { void onRetry(transfer); }}>Retry</button> : null}</div></article>)}{!transfers.length ? <div className="empty-state compact"><UploadIcon /><h3>No transfers yet</h3><p>Uploads and downloads will appear here with resumable progress.</p></div> : null}</div></section>;
 }
 
 function ActivityView({ events }: { events: ActivityEvent[] }) {
@@ -426,7 +478,7 @@ function SettingsView({ health, busy, onRefresh }: { health: StorageHealth | nul
     ["Object listing", health?.readAccess, "Storage read capability"],
     ["Object writes", health?.writeAccess, "Storage upload capability"],
   ] as const;
-  return <section className="content-view"><div className="view-heading"><div><p className="eyebrow">Independent infrastructure</p><h1>Connection</h1></div><button className="primary" disabled={busy} onClick={onRefresh}>{busy ? "Checking…" : "Run health check"}</button></div><div className="settings-grid"><article className="connection-card"><div className="provider-mark">DO</div><div><p className="eyebrow">Configured storage adapter</p><h2>{health?.provider === "mock" ? "Local mock object store" : "DigitalOcean Spaces"}</h2><p>The production adapter will issue short-lived presigned requests. Provider credentials stay on the Knowledge Dump Gateway.</p></div><span className={`large-status ${health?.providerReachable ? "healthy" : "offline"}`}>{health?.providerReachable ? "Healthy" : "Unavailable"}</span></article><article className="health-checks"><div className="section-heading"><h3>Service checks</h3><span>{health ? `${health.latencyMs} ms` : "Not checked"}</span></div>{checks.map(([label, passing, detail]) => <div className="health-row" key={label}><span className={passing ? "pass" : "fail"}>{passing ? <CheckIcon /> : <CloseIcon />}</span><div><strong>{label}</strong><p>{detail}</p></div><i>{passing ? "Ready" : "Check"}</i></div>)}</article><article className="xdg-card"><p className="eyebrow">Ubuntu workstation contract</p><h3>XDG-native local state</h3><code>$XDG_CONFIG_HOME/knowledge-dump</code><code>$XDG_DATA_HOME/knowledge-dump</code><code>$XDG_CACHE_HOME/knowledge-dump</code><code>$XDG_STATE_HOME/knowledge-dump</code><p>Refresh tokens move to the Ubuntu keyring before production desktop release.</p></article><article className="device-card"><div className="section-heading"><div><p className="eyebrow">Account security</p><h3>Authorized workstations</h3></div><span>{deviceList.filter((device) => device.status === "active").length} active</span></div>{deviceError ? <p className="inline-error">{deviceError}</p> : null}<div className="device-list">{deviceList.map((device) => <div className="device-row" key={device.id}><div className={`device-mark ${device.status}`}><CloudIcon /></div><div><strong>{device.label}</strong><p>{device.platform} · Last used {relativeTime(device.lastSeenAt)}</p></div><span>{device.id === currentDeviceId ? "This device" : device.status}</span><button className="secondary" disabled={device.id === currentDeviceId || device.status !== "active" || revoking === device.id} onClick={() => { void handleRevoke(device); }}>{revoking === device.id ? "Revoking…" : "Revoke"}</button></div>)}</div></article></div></section>;
+  return <section className="content-view"><div className="view-heading"><div><p className="eyebrow">Independent infrastructure</p><h1>Connection</h1></div><button className="primary" disabled={busy} onClick={onRefresh}>{busy ? "Checking…" : "Run health check"}</button></div><div className="settings-grid"><article className="connection-card"><div className="provider-mark">DO</div><div><p className="eyebrow">Configured storage adapter</p><h2>{health?.provider === "mock" ? "Local mock object store" : "DigitalOcean Spaces"}</h2><p>The gateway issues short-lived multipart and download requests. Provider credentials stay on the Knowledge Dump Gateway.</p></div><span className={`large-status ${health?.providerReachable ? "healthy" : "offline"}`}>{health?.providerReachable ? "Healthy" : "Unavailable"}</span></article><article className="health-checks"><div className="section-heading"><h3>Service checks</h3><span>{health ? `${health.latencyMs} ms` : "Not checked"}</span></div>{checks.map(([label, passing, detail]) => <div className="health-row" key={label}><span className={passing ? "pass" : "fail"}>{passing ? <CheckIcon /> : <CloseIcon />}</span><div><strong>{label}</strong><p>{detail}</p></div><i>{passing ? "Ready" : "Check"}</i></div>)}</article><article className="xdg-card"><p className="eyebrow">Ubuntu workstation contract</p><h3>XDG-native local state</h3><code>$XDG_CONFIG_HOME/knowledge-dump</code><code>$XDG_DATA_HOME/knowledge-dump</code><code>$XDG_CACHE_HOME/knowledge-dump</code><code>$XDG_STATE_HOME/knowledge-dump</code><p>Refresh tokens move to the Ubuntu keyring before production desktop release.</p></article><article className="device-card"><div className="section-heading"><div><p className="eyebrow">Account security</p><h3>Authorized workstations</h3></div><span>{deviceList.filter((device) => device.status === "active").length} active</span></div>{deviceError ? <p className="inline-error">{deviceError}</p> : null}<div className="device-list">{deviceList.map((device) => <div className="device-row" key={device.id}><div className={`device-mark ${device.status}`}><CloudIcon /></div><div><strong>{device.label}</strong><p>{device.platform} · Last used {relativeTime(device.lastSeenAt)}</p></div><span>{device.id === currentDeviceId ? "This device" : device.status}</span><button className="secondary" disabled={device.id === currentDeviceId || device.status !== "active" || revoking === device.id} onClick={() => { void handleRevoke(device); }}>{revoking === device.id ? "Revoking…" : "Revoke"}</button></div>)}</div></article></div></section>;
 }
 
 function NewFolderModal({ parentId, onClose, onCreated }: { parentId: string | null; onClose: () => void; onCreated: () => void }) {
@@ -464,7 +516,7 @@ function relativeTime(value: string): string {
 }
 
 function activityLabel(action: string): string {
-  return ({ file_uploaded: "Uploaded", folder_created: "Created folder", file_archived: "Archived", file_active: "Restored", file_deleted: "Deleted", file_updated: "Updated", workspace_seeded: "Workspace prepared" } as Record<string, string>)[action] || action.replaceAll("_", " ");
+  return ({ file_uploaded: "Uploaded", file_downloaded: "Downloaded", folder_created: "Created folder", file_archived: "Archived", file_active: "Restored", file_deleted: "Deleted", file_updated: "Updated", upload_started: "Started upload", upload_aborted: "Cancelled upload", upload_expired: "Expired upload", workspace_seeded: "Workspace prepared" } as Record<string, string>)[action] || action.replaceAll("_", " ");
 }
 
 function initials(value: string): string {
@@ -482,12 +534,15 @@ function humanError(value: string): string {
     refresh_token_invalid: "Your session expired. Sign in again.",
     device_revoked: "This workstation was revoked. Clear its local device registration before signing in again.",
     quota_bytes_exceeded: "This upload exceeds the workspace storage quota.",
+    quota_objects_exceeded: "This workspace has reached its file-count quota.",
+    upload_part_etag_missing: "The storage provider did not expose the part receipt. Check the Space CORS policy.",
+    upload_source_mismatch: "The selected file no longer matches this resumable upload.",
+    upload_expired: "This upload expired. Retry it to start a new transfer.",
+    upload_not_active: "This transfer can no longer be resumed. Retry it as a new upload.",
+    storage_provider_error: "The object storage provider could not complete this operation.",
+    download_failed: "The file could not be downloaded from object storage.",
     folder_not_empty: "Move or remove the files in this folder first.",
     Failed_to_fetch: "The Knowledge Dump Gateway could not be reached.",
   };
   return known[value] || value.replaceAll("_", " ");
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }

@@ -24,9 +24,18 @@ request body. Parent-folder validation also checks account ownership.
 
 ## Storage and secrets
 
-The gateway never gives a desktop application the DigitalOcean master key.
-Phase 3 will issue short-lived, account-scoped presigned transfers. Object keys
-will be opaque and unrelated to user filenames.
+The gateway never gives a desktop application the DigitalOcean master key. It
+issues short-lived, account-scoped presigned transfers against opaque object
+keys unrelated to user filenames. Upload sessions reserve quota, accept at most
+10,000 parts, and expose a file only after provider size verification.
+
+Local mock transfer tokens and download grants are stored only as HMAC hashes.
+Request logging strips query strings because those URLs contain bearer-equivalent
+grants. Production part bytes travel directly between the desktop and Spaces.
+
+Phase 3 does not encrypt file content in the desktop. Do not use this release
+for secrets, credential vaults, or private Codex archives; phase 4 adds the
+versioned client-side encryption and recovery contract.
 
 Production mode fails closed when `KNOWLEDGE_DUMP_TOKEN_PEPPER` is missing.
 Database passwords, token peppers, and Spaces credentials belong in host secret

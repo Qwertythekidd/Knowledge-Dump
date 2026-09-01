@@ -5,7 +5,8 @@ Its production database is PostgreSQL; SQLite remains the local-development and
 test backend. Both use the same SQLAlchemy Core schema.
 
 Copy `.env.example` to a host-owned environment file and provide unique values
-for the PostgreSQL password and token pepper. Do not commit either value.
+for the PostgreSQL password, token pepper, and limited Spaces key. Set
+`KNOWLEDGE_DUMP_STORAGE_PROVIDER=digitalocean_spaces`. Do not commit these values.
 
 ```bash
 cd infra/gateway
@@ -14,7 +15,8 @@ docker compose --env-file /secure/path/knowledge-dump-gateway.env up -d --build
 
 The container binds only to loopback. Put Caddy or another TLS edge in front of
 it and allow only the exact desktop/web origins needed by the deployment.
-DigitalOcean Spaces keys will be added to this gateway service during phase 3.
+Run `knowledge-dump-gateway transfers cleanup-expired` hourly from the host in
+addition to the Space lifecycle policy. Startup also attempts transfer cleanup.
 
 ## First account
 

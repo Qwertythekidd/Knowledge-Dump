@@ -16,12 +16,15 @@ from .schema import (
     accounts,
     audit_events,
     devices,
+    download_grants,
     file_versions,
     files,
     metadata,
     quotas,
     schema_versions,
     sessions,
+    upload_parts,
+    upload_sessions,
 )
 from .security import CredentialSecurity
 
@@ -36,8 +39,8 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _future(*, minutes: int = 0, days: int = 0) -> str:
-    return (datetime.now(timezone.utc) + timedelta(minutes=minutes, days=days)).isoformat()
+def _future(*, minutes: int = 0, hours: int = 0, days: int = 0) -> str:
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes, hours=hours, days=days)).isoformat()
 
 
 def _expired(value: str) -> bool:
@@ -615,6 +618,409 @@ class Catalog:
             "createdAt": row["created_at"],
         } for row in rows]
 
+    def initiate_upload(
+        self,
+        account_id: str,
+        device_id: str,
+        *,
+        name: str,
+        parent_id: str | None,
+        kind: str,
+        mime_type: str | None,
+        size_bytes: int,
+        object_key: str,
+        provider_upload_id: str,
+        part_size: int,
+        total_parts: int,
+    ) -> dict[str, Any]:
+        normalized_name = self._valid_name(name)
+        if kind == "folder" or size_bytes < 0 or part_size < 1 or total_parts < 1 or total_parts > 10_000:
+            raise ValueError("upload_metadata_invalid")
+        identifier = f"upl_{uuid.uuid4().hex}"
+        now = utc_now()
+        expires_at = _future(hours=self.config.upload_session_hours)
+        with self.engine.begin() as connection:
+            self._validate_parent(connection, account_id, parent_id, identifier)
+            self._enforce_quota(connection, account_id, size_bytes, include_reservations=True)
+            connection.execute(insert(upload_sessions).values(
+                id=identifier,
+                account_id=account_id,
+                device_id=device_id,
+                parent_id=parent_id,
+                name=normalized_name,
+                kind=kind[:32],
+                mime_type=mime_type[:255] if mime_type else None,
+                size_bytes=size_bytes,
+                object_key=object_key,
+                provider_upload_id=provider_upload_id,
+                part_size=part_size,
+                total_parts=total_parts,
+                status="initiated",
+                expires_at=expires_at,
+                created_at=now,
+                updated_at=now,
+                completed_at=None,
+                file_id=None,
+                error=None,
+            ))
+            self._audit(
+                connection,
+                account_id,
+                device_id,
+                "upload_started",
+                "upload",
+                identifier,
+                normalized_name,
+                {"sizeBytes": size_bytes, "totalParts": total_parts},
+            )
+        return self.upload_session(account_id, identifier) or {}
+
+    def upload_session(self, account_id: str, upload_id: str) -> dict[str, Any] | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(select(upload_sessions).where(and_(
+                upload_sessions.c.id == upload_id,
+                upload_sessions.c.account_id == account_id,
+            ))).mappings().first()
+            if not row:
+                return None
+            parts = connection.execute(
+                select(upload_parts).where(and_(
+                    upload_parts.c.upload_session_id == upload_id,
+                    upload_parts.c.uploaded_at.is_not(None),
+                )).order_by(upload_parts.c.part_number)
+            ).mappings().all()
+        return self._public_upload(row, parts)
+
+    def upload_provider_record(self, account_id: str, upload_id: str) -> dict[str, Any] | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(select(upload_sessions).where(and_(
+                upload_sessions.c.id == upload_id,
+                upload_sessions.c.account_id == account_id,
+            ))).mappings().first()
+        return dict(row) if row else None
+
+    def active_upload_provider_record(self, account_id: str, upload_id: str) -> dict[str, Any]:
+        with self.engine.begin() as connection:
+            return dict(self._active_upload(connection, account_id, upload_id))
+
+    def issue_mock_part_token(
+        self,
+        account_id: str,
+        upload_id: str,
+        part_number: int,
+        raw_token: str,
+        expires_at: str,
+    ) -> None:
+        with self.engine.begin() as connection:
+            session = self._active_upload(connection, account_id, upload_id)
+            self._validate_part_number(session, part_number)
+            existing = connection.execute(select(upload_parts).where(and_(
+                upload_parts.c.upload_session_id == upload_id,
+                upload_parts.c.part_number == part_number,
+            ))).mappings().first()
+            values = {
+                "upload_token_hash": self.security.token_hash(raw_token),
+                "token_expires_at": expires_at,
+            }
+            if existing:
+                connection.execute(update(upload_parts).where(upload_parts.c.id == existing["id"]).values(**values))
+            else:
+                connection.execute(insert(upload_parts).values(
+                    id=f"prt_{uuid.uuid4().hex}",
+                    upload_session_id=upload_id,
+                    part_number=part_number,
+                    size_bytes=None,
+                    etag=None,
+                    uploaded_at=None,
+                    **values,
+                ))
+
+    def validate_mock_part_token(self, upload_id: str, part_number: int, raw_token: str) -> dict[str, Any] | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(
+                    upload_sessions,
+                    upload_parts.c.upload_token_hash,
+                    upload_parts.c.token_expires_at,
+                )
+                .join(upload_parts, upload_parts.c.upload_session_id == upload_sessions.c.id)
+                .where(and_(
+                    upload_sessions.c.id == upload_id,
+                    upload_parts.c.part_number == part_number,
+                ))
+            ).mappings().first()
+        if not row or row["status"] not in {"initiated", "uploading"}:
+            return None
+        if _expired(row["expires_at"]) or not row["token_expires_at"] or _expired(row["token_expires_at"]):
+            return None
+        if not row["upload_token_hash"] or not self.security.token_matches(row["upload_token_hash"], raw_token):
+            return None
+        expected = self._expected_part_size(row, part_number)
+        return {**dict(row), "expected_part_size": expected}
+
+    def record_upload_part(
+        self,
+        account_id: str,
+        upload_id: str,
+        part_number: int,
+        etag: str,
+        size_bytes: int,
+    ) -> dict[str, Any]:
+        normalized_etag = etag.strip()
+        if not normalized_etag or len(normalized_etag) > 512:
+            raise ValueError("upload_part_etag_invalid")
+        with self.engine.begin() as connection:
+            session = self._active_upload(connection, account_id, upload_id)
+            self._validate_part_number(session, part_number)
+            if size_bytes != self._expected_part_size(session, part_number):
+                raise ValueError("upload_part_size_mismatch")
+            existing = connection.execute(select(upload_parts).where(and_(
+                upload_parts.c.upload_session_id == upload_id,
+                upload_parts.c.part_number == part_number,
+            ))).mappings().first()
+            values = {
+                "size_bytes": size_bytes,
+                "etag": normalized_etag,
+                "uploaded_at": utc_now(),
+                "upload_token_hash": None,
+                "token_expires_at": None,
+            }
+            if existing:
+                connection.execute(update(upload_parts).where(upload_parts.c.id == existing["id"]).values(**values))
+            else:
+                connection.execute(insert(upload_parts).values(
+                    id=f"prt_{uuid.uuid4().hex}",
+                    upload_session_id=upload_id,
+                    part_number=part_number,
+                    **values,
+                ))
+            connection.execute(update(upload_sessions).where(upload_sessions.c.id == upload_id).values(
+                status="uploading",
+                updated_at=utc_now(),
+                error=None,
+            ))
+        return self.upload_session(account_id, upload_id) or {}
+
+    def prepare_upload_completion(self, account_id: str, upload_id: str) -> dict[str, Any]:
+        with self.engine.begin() as connection:
+            session = connection.execute(select(upload_sessions).where(and_(
+                upload_sessions.c.id == upload_id,
+                upload_sessions.c.account_id == account_id,
+            )).with_for_update()).mappings().first()
+            if not session:
+                raise ValueError("upload_not_found")
+            if session["status"] not in {"initiated", "uploading", "completing"}:
+                raise ValueError("upload_not_active")
+            if _expired(session["expires_at"]):
+                raise ValueError("upload_expired")
+            parts = connection.execute(
+                select(upload_parts).where(and_(
+                    upload_parts.c.upload_session_id == upload_id,
+                    upload_parts.c.uploaded_at.is_not(None),
+                )).order_by(upload_parts.c.part_number)
+            ).mappings().all()
+            if len(parts) != session["total_parts"]:
+                raise ValueError("upload_parts_incomplete")
+            if [part["part_number"] for part in parts] != list(range(1, session["total_parts"] + 1)):
+                raise ValueError("upload_parts_incomplete")
+            if sum(int(part["size_bytes"]) for part in parts) != session["size_bytes"]:
+                raise ValueError("upload_size_mismatch")
+            if session["status"] != "completing":
+                connection.execute(update(upload_sessions).where(upload_sessions.c.id == upload_id).values(
+                    status="completing",
+                    updated_at=utc_now(),
+                    error=None,
+                ))
+        return {
+            **dict(session),
+            "parts": [{"PartNumber": part["part_number"], "ETag": part["etag"]} for part in parts],
+        }
+
+    def finalize_upload(self, account_id: str, upload_id: str, *, observed_size: int, observed_etag: str) -> dict[str, Any]:
+        now = utc_now()
+        with self.engine.begin() as connection:
+            session = connection.execute(select(upload_sessions).where(and_(
+                upload_sessions.c.id == upload_id,
+                upload_sessions.c.account_id == account_id,
+            )).with_for_update()).mappings().first()
+            if not session or session["status"] != "completing":
+                raise ValueError("upload_not_completing")
+            if int(observed_size) != int(session["size_bytes"]):
+                raise ValueError("upload_provider_size_mismatch")
+            file_id = f"obj_{uuid.uuid4().hex}"
+            connection.execute(insert(files).values(
+                id=file_id,
+                account_id=account_id,
+                parent_id=session["parent_id"],
+                name=session["name"],
+                kind=session["kind"],
+                mime_type=session["mime_type"],
+                size_bytes=session["size_bytes"],
+                status="active",
+                version=1,
+                object_key=session["object_key"],
+                created_at=now,
+                updated_at=now,
+            ))
+            file_row = connection.execute(select(files).where(files.c.id == file_id)).mappings().one()
+            self._snapshot_version(connection, file_row)
+            connection.execute(update(upload_sessions).where(upload_sessions.c.id == upload_id).values(
+                status="completed",
+                file_id=file_id,
+                completed_at=now,
+                updated_at=now,
+                error=None,
+            ))
+            self._audit(
+                connection,
+                account_id,
+                session["device_id"],
+                "file_uploaded",
+                session["kind"],
+                file_id,
+                session["name"],
+                {"uploadId": upload_id, "etag": observed_etag, "sizeBytes": observed_size},
+            )
+        return self.get_file(account_id, file_id) or {}
+
+    def reset_upload_after_completion_error(self, account_id: str, upload_id: str, error: str) -> None:
+        with self.engine.begin() as connection:
+            connection.execute(update(upload_sessions).where(and_(
+                upload_sessions.c.id == upload_id,
+                upload_sessions.c.account_id == account_id,
+                upload_sessions.c.status == "completing",
+            )).values(status="uploading", error=error[:240], updated_at=utc_now()))
+
+    def abort_upload(self, account_id: str, upload_id: str, device_id: str, status: str = "aborted") -> dict[str, Any] | None:
+        if status not in {"aborted", "expired"}:
+            raise ValueError("upload_status_invalid")
+        with self.engine.begin() as connection:
+            row = connection.execute(select(upload_sessions).where(and_(
+                upload_sessions.c.id == upload_id,
+                upload_sessions.c.account_id == account_id,
+            )).with_for_update()).mappings().first()
+            if not row:
+                return None
+            if row["status"] == "completed":
+                raise ValueError("upload_already_completed")
+            if row["status"] in {"aborted", "expired"}:
+                return dict(row)
+            connection.execute(update(upload_sessions).where(upload_sessions.c.id == upload_id).values(
+                status=status,
+                updated_at=utc_now(),
+                error=None,
+            ))
+            self._audit(connection, account_id, device_id, f"upload_{status}", "upload", upload_id, row["name"])
+        return dict(row)
+
+    def expired_uploads(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(select(upload_sessions).where(and_(
+                upload_sessions.c.status.in_(("initiated", "uploading")),
+                upload_sessions.c.expires_at <= utc_now(),
+            )).order_by(upload_sessions.c.expires_at).limit(max(1, min(limit, 500)))).mappings().all()
+        return [dict(row) for row in rows]
+
+    def file_storage_record(self, account_id: str, file_id: str) -> dict[str, Any] | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(select(files).where(and_(
+                files.c.id == file_id,
+                files.c.account_id == account_id,
+            ))).mappings().first()
+        return dict(row) if row else None
+
+    def create_download_grant(self, account_id: str, file_id: str, raw_token: str, expires_at: str) -> None:
+        record = self.file_storage_record(account_id, file_id)
+        if not record or record["kind"] == "folder" or not record["object_key"]:
+            raise ValueError("download_not_found")
+        with self.engine.begin() as connection:
+            connection.execute(insert(download_grants).values(
+                id=f"dgr_{uuid.uuid4().hex}",
+                account_id=account_id,
+                file_id=file_id,
+                object_key=record["object_key"],
+                token_hash=self.security.token_hash(raw_token),
+                expires_at=expires_at,
+                created_at=utc_now(),
+            ))
+
+    def validate_download_grant(self, raw_token: str) -> dict[str, Any] | None:
+        if not raw_token:
+            return None
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(download_grants, files.c.name, files.c.mime_type, files.c.size_bytes)
+                .join(files, files.c.id == download_grants.c.file_id)
+                .where(download_grants.c.token_hash == self.security.token_hash(raw_token))
+            ).mappings().first()
+        if not row or _expired(row["expires_at"]):
+            return None
+        return dict(row)
+
+    def record_download_authorized(self, account_id: str, file_id: str, device_id: str) -> None:
+        record = self.file_storage_record(account_id, file_id)
+        if not record:
+            raise ValueError("download_not_found")
+        with self.engine.begin() as connection:
+            self._audit(connection, account_id, device_id, "file_downloaded", record["kind"], file_id, record["name"])
+
+    def cleanup_expired_download_grants(self) -> int:
+        with self.engine.begin() as connection:
+            result = connection.execute(delete(download_grants).where(download_grants.c.expires_at <= utc_now()))
+        return int(result.rowcount or 0)
+
+    @staticmethod
+    def _active_upload(connection: Connection, account_id: str, upload_id: str) -> Any:
+        row = connection.execute(select(upload_sessions).where(and_(
+            upload_sessions.c.id == upload_id,
+            upload_sessions.c.account_id == account_id,
+        )).with_for_update()).mappings().first()
+        if not row:
+            raise ValueError("upload_not_found")
+        if row["status"] not in {"initiated", "uploading"}:
+            raise ValueError("upload_not_active")
+        if _expired(row["expires_at"]):
+            raise ValueError("upload_expired")
+        return row
+
+    @staticmethod
+    def _validate_part_number(session: Any, part_number: int) -> None:
+        if part_number < 1 or part_number > int(session["total_parts"]):
+            raise ValueError("upload_part_number_invalid")
+
+    @staticmethod
+    def _expected_part_size(session: Any, part_number: int) -> int:
+        Catalog._validate_part_number(session, part_number)
+        if part_number < int(session["total_parts"]):
+            return int(session["part_size"])
+        return int(session["size_bytes"]) - int(session["part_size"]) * (int(session["total_parts"]) - 1)
+
+    @staticmethod
+    def _public_upload(row: Any, parts: list[Any]) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "parentId": row["parent_id"],
+            "kind": row["kind"],
+            "mimeType": row["mime_type"],
+            "sizeBytes": row["size_bytes"],
+            "partSize": row["part_size"],
+            "totalParts": row["total_parts"],
+            "status": row["status"],
+            "expiresAt": row["expires_at"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+            "completedAt": row["completed_at"],
+            "fileId": row["file_id"],
+            "error": row["error"],
+            "completedParts": [{
+                "partNumber": part["part_number"],
+                "sizeBytes": part["size_bytes"],
+                "etag": part["etag"],
+                "uploadedAt": part["uploaded_at"],
+            } for part in parts],
+        }
+
     def _resolve_device(
         self,
         connection: Connection,
@@ -651,14 +1057,34 @@ class Catalog:
         ))
         return dict(connection.execute(select(devices).where(devices.c.id == identifier)).mappings().one())
 
-    def _enforce_quota(self, connection: Connection, account_id: str, added_bytes: int) -> None:
+    def _enforce_quota(
+        self,
+        connection: Connection,
+        account_id: str,
+        added_bytes: int,
+        *,
+        include_reservations: bool = False,
+    ) -> None:
         quota_row = connection.execute(
             select(quotas).where(quotas.c.account_id == account_id).with_for_update()
         ).mappings().one()
         usage = self._usage(connection, account_id)
-        if usage["bytes"] + added_bytes > int(quota_row["max_bytes"]):
+        reserved_bytes = 0
+        reserved_objects = 0
+        if include_reservations:
+            reserved = connection.execute(select(
+                func.coalesce(func.sum(upload_sessions.c.size_bytes), 0).label("reserved_bytes"),
+                func.count(upload_sessions.c.id).label("reserved_objects"),
+            ).where(and_(
+                upload_sessions.c.account_id == account_id,
+                upload_sessions.c.status.in_(("initiated", "uploading", "completing")),
+                upload_sessions.c.expires_at > utc_now(),
+            ))).mappings().one()
+            reserved_bytes = int(reserved["reserved_bytes"])
+            reserved_objects = int(reserved["reserved_objects"])
+        if usage["bytes"] + reserved_bytes + added_bytes > int(quota_row["max_bytes"]):
             raise ValueError("quota_bytes_exceeded")
-        if usage["objects"] + 1 > int(quota_row["max_objects"]):
+        if usage["objects"] + reserved_objects + 1 > int(quota_row["max_objects"]):
             raise ValueError("quota_objects_exceeded")
 
     @staticmethod

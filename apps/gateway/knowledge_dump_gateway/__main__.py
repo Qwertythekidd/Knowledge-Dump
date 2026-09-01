@@ -6,7 +6,8 @@ import os
 import sys
 
 from .config import GatewayConfig
-from .server import create_server
+from .server import cleanup_expired_uploads, create_server
+from .storage import storage_from_config
 from .store import Catalog
 
 
@@ -28,6 +29,9 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--seed-workspace", action="store_true")
 
     commands.add_parser("database-status", help="Show the configured database backend")
+    transfers = commands.add_parser("transfers", help="Maintain durable transfer sessions")
+    transfer_commands = transfers.add_subparsers(dest="transfer_command", required=True)
+    transfer_commands.add_parser("cleanup-expired", help="Abort expired multipart uploads")
     return root
 
 
@@ -39,9 +43,10 @@ def main() -> None:
         host = getattr(arguments, "host", os.environ.get("KNOWLEDGE_DUMP_GATEWAY_HOST", "127.0.0.1"))
         port = getattr(arguments, "port", int(os.environ.get("KNOWLEDGE_DUMP_GATEWAY_PORT", "8787")))
         server = create_server(host=host, port=port, config=config)
+        cleaned = cleanup_expired_uploads(server.catalog, server.storage)
         print(
             f"Knowledge Dump gateway listening on http://{host}:{port} "
-            f"({server.catalog.config.mode}, {server.catalog.database_backend})",
+            f"({server.catalog.config.mode}, {server.catalog.database_backend}, cleaned={cleaned})",
             flush=True,
         )
         try:
@@ -55,6 +60,9 @@ def main() -> None:
     catalog = Catalog(config=config, bootstrap_demo=False)
     if command == "database-status":
         print(f"mode={config.mode} backend={catalog.database_backend} url={_safe_database_url(config.database_url)}")
+        return
+    if command == "transfers" and arguments.transfer_command == "cleanup-expired":
+        print(f"Cleaned {cleanup_expired_uploads(catalog, storage_from_config(config))} expired upload(s)")
         return
     if command == "account" and arguments.account_command == "create":
         password = sys.stdin.readline().rstrip("\n") if arguments.password_stdin else getpass.getpass("Password: ")

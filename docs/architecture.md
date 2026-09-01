@@ -27,9 +27,10 @@ enforcement. It never proxies large object bytes in production. Upload and
 download data moves between the desktop and object storage using short-lived
 presigned URLs.
 
-The account and catalog schema runs on PostgreSQL in deployment and SQLite in
-local development. Only the object-byte adapter remains mocked: its routes
-intentionally match the planned presigned-transfer contract.
+The account, catalog, and transfer schema runs on PostgreSQL in deployment and
+SQLite in local development. Durable multipart checkpoints make interrupted
+uploads resumable. Provider completion and object size verification happen
+before a file becomes visible in the catalog.
 
 ## Object storage
 
@@ -42,7 +43,8 @@ disabled and a limited access key stored only by the gateway.
 
 - PostgreSQL: users, sessions, device registrations, virtual folders, file
   records, object versions, transfer sessions, quotas, and audit events.
-- Spaces: opaque immutable file objects and encrypted manifests.
+- Spaces: private opaque immutable file objects. Client-side encryption and
+  encrypted manifests arrive in phase 4.
 - Desktop SQLite: local index, sync cursor, transfer resume state, and cache
   inventory.
 - Ubuntu keyring: refresh token and device credentials.

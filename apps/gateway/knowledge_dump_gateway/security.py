@@ -33,6 +33,9 @@ class CredentialSecurity:
     def token_hash(self, token: str) -> str:
         return hmac.new(self._pepper, token.encode("utf-8"), hashlib.sha256).hexdigest()
 
+    def token_matches(self, expected_hash: str, token: str) -> bool:
+        return hmac.compare_digest(expected_hash, self.token_hash(token))
+
     @staticmethod
     def validate_password(password: str) -> None:
         if len(password) < 12:

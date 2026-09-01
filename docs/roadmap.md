@@ -18,12 +18,12 @@ revocation, account quotas, account-scoped virtual paths, immutable metadata
 versions, and durable audit events. Demo bootstrap is development-only and
 production accounts are operator-provisioned.
 
-## Phase 3: DigitalOcean Spaces transfers - adapter prepared
+## Phase 3: DigitalOcean Spaces transfers - implemented
 
-Implement the `SpacesStorageAdapter`, multipart upload sessions, short-lived
-presigned URLs, object verification, range downloads, and lifecycle cleanup.
-Uploads in the scaffold show real queue/progress behavior but commit metadata
-only. DigitalOcean infrastructure remains configuration, not another project.
+The `SpacesStorageAdapter`, durable multipart sessions, batched short-lived
+part URLs, resumable ETag checkpoints, object verification, range downloads,
+abort/expiry cleanup, and direct-transfer desktop queue are implemented.
+DigitalOcean infrastructure remains configuration, not another project.
 
 ## Phase 4: encryption, sync, and recovery - surfaces prepared
 
@@ -38,5 +38,7 @@ Build and sign the Debian package, add repository/update metadata, harden the
 desktop CSP, package fonts locally, run Ubuntu integration tests, and establish
 backup/restore procedures for PostgreSQL and Spaces metadata.
 
-No mock behavior should silently become production behavior. Each deferred
-feature is named in the UI or documentation and has a stable replacement seam.
+Real files are now supported, but secrets and private archives must wait for
+phase 4 client-side encryption. No mock behavior should silently become
+production behavior. Each deferred feature is named in the UI or documentation
+and has a stable replacement seam.

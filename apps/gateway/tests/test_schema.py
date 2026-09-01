@@ -23,6 +23,9 @@ class SchemaTests(unittest.TestCase):
         self.assertIn("CREATE TABLE accounts", rendered)
         self.assertIn("CREATE TABLE file_versions", rendered)
         self.assertIn("CREATE TABLE audit_events", rendered)
+        self.assertIn("CREATE TABLE upload_sessions", rendered)
+        self.assertIn("CREATE TABLE upload_parts", rendered)
+        self.assertIn("CREATE TABLE download_grants", rendered)
 
     def test_legacy_mock_schema_is_preserved_before_upgrade(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

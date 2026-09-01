@@ -79,6 +79,49 @@ export interface FileVersion {
   createdAt: string;
 }
 
+export type UploadStatus = "initiated" | "uploading" | "completing" | "completed" | "aborted" | "expired";
+
+export interface CompletedUploadPart {
+  partNumber: number;
+  sizeBytes: number;
+  etag: string;
+  uploadedAt: string;
+}
+
+export interface UploadSession {
+  id: string;
+  name: string;
+  parentId: string | null;
+  kind: FileKind;
+  mimeType: string | null;
+  sizeBytes: number;
+  partSize: number;
+  totalParts: number;
+  status: UploadStatus;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  fileId: string | null;
+  error: string | null;
+  completedParts: CompletedUploadPart[];
+}
+
+export interface UploadPartGrant {
+  partNumber: number;
+  url: string;
+  method: "PUT";
+  headers: Record<string, string>;
+  expiresAt: string;
+}
+
+export interface DownloadGrant {
+  url: string;
+  method: "GET";
+  headers: Record<string, string>;
+  expiresAt: string;
+}
+
 export interface ApiError {
   error: string;
   detail?: string;

@@ -8,7 +8,7 @@ RUN useradd --create-home --uid 10001 knowledge-dump
 WORKDIR /app
 COPY pyproject.toml constraints-gateway.txt README.md ./
 COPY apps ./apps
-RUN python -m pip install -c constraints-gateway.txt '.[postgres]'
+RUN python -m pip install -c constraints-gateway.txt '.[postgres,spaces]'
 
 USER knowledge-dump
 EXPOSE 8787

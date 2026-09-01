@@ -15,12 +15,12 @@ The current foundation includes:
 - a PostgreSQL/SQLite account and catalog gateway with secure rotating sessions;
 - shared TypeScript protocol definitions;
 - a Tauri/WebKitGTK native shell scaffold;
-- DigitalOcean Spaces adapter and deployment contracts;
+- resumable multipart uploads and short-lived DigitalOcean Spaces transfers;
 - Debian packaging and XDG filesystem documentation.
 
-The gateway stores account-scoped, versioned file metadata while object bytes
-remain represented by development placeholders. Phase 3 replaces that byte path
-with presigned DigitalOcean Spaces transfers without changing the desktop API.
+The gateway stores account-scoped, versioned metadata and verifies object bytes
+before catalog commit. Local development uses a disk-backed multipart adapter;
+production uses short-lived presigned requests against a private Space.
 
 ## Quick start
 
@@ -47,8 +47,9 @@ npm run check
 The browser development loop uses the real React client against the account and
 catalog gateway on an XDG-backed SQLite database. The same schema supports
 PostgreSQL deployments. `npm run dev:native` opens the client in WebKitGTK after
-the gateway is running. Object bytes remain phase 3 work; uploads currently
-persist versioned metadata and expose a placeholder download.
+the gateway is running. Uploads transfer real bytes and can resume completed
+multipart checkpoints. Client-side encryption remains phase 4 work, so
+sensitive archives and secrets must not be uploaded yet.
 
 See [Development](docs/development.md), [Architecture](docs/architecture.md),
 [XDG contract](docs/xdg-contract.md), and the [delivery roadmap](docs/roadmap.md)

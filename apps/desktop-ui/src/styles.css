@@ -130,6 +130,10 @@ h1, h2, h3 { margin: 0; font-family: Manrope, sans-serif; letter-spacing: -.035e
 .transfer-copy { flex: 1; }
 .transfer-copy > div:first-child { display: flex; justify-content: space-between; font-size: 11px; }
 .transfer-copy small { color: #89958e; font-size: 10px; }
+.transfer-actions { display: flex; align-items: center; }
+.transfer-actions .secondary { min-width: 70px; padding: 8px 12px; }
+.transfer-icon.failed, .transfer-icon.cancelled { color: #9a493b; background: #f7e9e5; }
+.transfer-icon.preparing, .transfer-icon.verifying { color: #956d22; background: #f8f0dd; }
 .timeline article > span { width: 9px; height: 9px; border-radius: 50%; background: var(--lime); box-shadow: 0 0 0 4px #edf2cc; }
 .timeline article div { flex: 1; }
 .timeline p { margin: 3px 0 0; color: #79867e; font-size: 11px; }

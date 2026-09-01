@@ -3,9 +3,12 @@ import type {
   ActivityEvent,
   CloudFile,
   Device,
+  DownloadGrant,
   FileVersion,
   SessionResponse,
   StorageHealth,
+  UploadPartGrant,
+  UploadSession,
 } from "@knowledge-dump/protocol";
 
 const TOKEN_KEY = "knowledge-dump.session-token";
@@ -162,8 +165,8 @@ export async function createFolder(name: string, parentId: string | null): Promi
   return result.file;
 }
 
-export async function registerUpload(file: File, parentId: string | null): Promise<CloudFile> {
-  const result = await request<{ file: CloudFile }>("/v1/files", {
+async function initiateUpload(file: File, parentId: string | null): Promise<UploadSession> {
+  const result = await request<{ upload: UploadSession }>("/v1/uploads", {
     method: "POST",
     body: JSON.stringify({
       name: file.name,
@@ -173,7 +176,93 @@ export async function registerUpload(file: File, parentId: string | null): Promi
       sizeBytes: file.size,
     }),
   });
-  return result.file;
+  return result.upload;
+}
+
+export async function uploadStatus(uploadId: string): Promise<UploadSession> {
+  const result = await request<{ upload: UploadSession }>(`/v1/uploads/${encodeURIComponent(uploadId)}`);
+  return result.upload;
+}
+
+export async function abortUpload(uploadId: string): Promise<void> {
+  await request(`/v1/uploads/${encodeURIComponent(uploadId)}`, { method: "DELETE" });
+}
+
+export async function uploadFile(
+  file: File,
+  parentId: string | null,
+  onProgress: (progress: number) => void,
+  onSession: (session: UploadSession) => void,
+  signal?: AbortSignal,
+  existingUploadId?: string,
+): Promise<CloudFile> {
+  let upload = existingUploadId ? await uploadStatus(existingUploadId) : await initiateUpload(file, parentId);
+  if (upload.name !== file.name || upload.sizeBytes !== file.size) throw new Error("upload_source_mismatch");
+  if (upload.status === "completed" || upload.status === "completing") {
+    const reconciled = await request<{ file: CloudFile; upload: UploadSession }>(
+      `/v1/uploads/${encodeURIComponent(upload.id)}/complete`,
+      { method: "POST", body: JSON.stringify({}), signal },
+    );
+    onSession(reconciled.upload);
+    onProgress(100);
+    return reconciled.file;
+  }
+  if (!(["initiated", "uploading"] as string[]).includes(upload.status)) throw new Error("upload_not_active");
+  onSession(upload);
+
+  const completed = new Set(upload.completedParts.map((part) => part.partNumber));
+  let completedBytes = upload.completedParts.reduce((total, part) => total + part.sizeBytes, 0);
+  const missing = Array.from({ length: upload.totalParts }, (_, index) => index + 1).filter((partNumber) => !completed.has(partNumber));
+  const grants: UploadPartGrant[] = [];
+  for (let offset = 0; offset < missing.length; offset += 25) {
+    const result = await request<{ parts: UploadPartGrant[] }>(`/v1/uploads/${encodeURIComponent(upload.id)}/parts`, {
+      method: "POST",
+      body: JSON.stringify({ partNumbers: missing.slice(offset, offset + 25) }),
+      signal,
+    });
+    grants.push(...result.parts);
+  }
+
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (cursor < grants.length) {
+      const grant = grants[cursor];
+      cursor += 1;
+      const start = (grant.partNumber - 1) * upload.partSize;
+      const end = Math.min(file.size, start + upload.partSize);
+      const body = file.slice(start, end);
+      const response = await fetch(resolveTransferUrl(grant.url), {
+        method: grant.method,
+        headers: grant.headers,
+        body,
+        signal,
+      });
+      if (!response.ok) throw new Error(`upload_part_failed_${response.status}`);
+      const etag = response.headers.get("ETag");
+      if (!etag) throw new Error("upload_part_etag_missing");
+      const reported = await request<{ upload: UploadSession }>(
+        `/v1/uploads/${encodeURIComponent(upload.id)}/parts/${grant.partNumber}/complete`,
+        { method: "POST", body: JSON.stringify({ etag, sizeBytes: body.size }), signal },
+      );
+      upload = reported.upload;
+      completedBytes += body.size;
+      onSession(upload);
+      onProgress(file.size ? Math.min(94, Math.round(completedBytes / file.size * 94)) : 94);
+    }
+  }
+  const workers = await Promise.allSettled(
+    Array.from({ length: Math.min(3, Math.max(1, grants.length)) }, () => worker()),
+  );
+  const failedWorker = workers.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failedWorker) throw failedWorker.reason;
+  onProgress(96);
+  const completedUpload = await request<{ file: CloudFile; upload: UploadSession }>(
+    `/v1/uploads/${encodeURIComponent(upload.id)}/complete`,
+    { method: "POST", body: JSON.stringify({}), signal },
+  );
+  onSession(completedUpload.upload);
+  onProgress(100);
+  return completedUpload.file;
 }
 
 export async function renameFile(fileId: string, name: string): Promise<CloudFile> {
@@ -202,15 +291,11 @@ export async function activity(): Promise<ActivityEvent[]> {
 }
 
 export async function downloadFile(file: CloudFile): Promise<void> {
-  let response = await fetch(`${gatewayBase()}/v1/files/${encodeURIComponent(file.id)}/download`, {
-    headers: { Authorization: `Bearer ${token()}` },
+  const grant = await request<DownloadGrant>(`/v1/files/${encodeURIComponent(file.id)}/download`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
-  if (response.status === 401 && refreshToken()) {
-    await refreshSession();
-    response = await fetch(`${gatewayBase()}/v1/files/${encodeURIComponent(file.id)}/download`, {
-      headers: { Authorization: `Bearer ${token()}` },
-    });
-  }
+  const response = await fetch(resolveTransferUrl(grant.url), { method: grant.method, headers: grant.headers });
   if (!response.ok) throw new Error("download_failed");
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
@@ -219,6 +304,11 @@ export async function downloadFile(file: CloudFile): Promise<void> {
   anchor.download = file.name;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function resolveTransferUrl(value: string): string {
+  if (/^https?:\/\//i.test(value)) return value;
+  return `${gatewayBase()}${value.startsWith("/") ? value : `/${value}`}`;
 }
 
 function kindForFile(file: File): CloudFile["kind"] {
