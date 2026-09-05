@@ -1,5 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import type { Account, ActivityEvent, CloudFile, Device, StorageHealth, UploadSession } from "@knowledge-dump/protocol";
+import type {
+  Account,
+  ActivityEvent,
+  CloudFile,
+  CodexCollectionSummary,
+  CodexRestoreResult,
+  CodexSourceInventory,
+  CodexSyncResult,
+  CodexVerificationResult,
+  Device,
+  StorageHealth,
+  UploadSession,
+} from "@knowledge-dump/protocol";
 
 import {
   activity as getActivity,
@@ -22,6 +34,17 @@ import {
   uploadFile,
 } from "./api";
 import {
+  chooseLocalDirectory,
+  codexStorageDefaults,
+  inspectCodexCollection,
+  localCodexAvailable,
+  restoreCodexCollection,
+  saveCodexStoragePreferences,
+  scanCodexSource,
+  syncCodexCollection,
+  verifyCodexCollection,
+} from "./localCodex";
+import {
   ActivityIcon,
   ArchiveIcon,
   CheckIcon,
@@ -39,7 +62,7 @@ import {
   UploadIcon,
 } from "./components/Icons";
 
-type View = "files" | "recent" | "archived" | "transfers" | "settings";
+type View = "files" | "codex" | "recent" | "archived" | "transfers" | "settings";
 type DisplayMode = "grid" | "list";
 type TransferStatus = "queued" | "preparing" | "uploading" | "verifying" | "completed" | "failed" | "cancelled";
 
@@ -58,6 +81,7 @@ interface Transfer {
 
 export default function App() {
   const [account, setAccount] = useState<Account | null>(null);
+  const [localCodexOnly, setLocalCodexOnly] = useState(false);
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState("");
   const [view, setView] = useState<View>("files");
@@ -97,7 +121,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!account || view === "settings" || view === "transfers" || view === "recent") return;
+    if (!account || view === "settings" || view === "transfers" || view === "recent" || view === "codex") return;
     void refreshFiles();
   }, [account, currentFolder?.id, view, search]);
 
@@ -261,7 +285,8 @@ export default function App() {
   }
 
   if (booting) return <div className="app-loading"><CloudIcon /><span>Opening Knowledge Dump…</span></div>;
-  if (!account) return <LoginScreen onAuthenticated={(nextAccount, nextHealth) => { setAccount(nextAccount); setHealth(nextHealth); }} />;
+  if (!account && localCodexOnly) return <div className="local-codex-shell"><header><div className="brand-lockup"><CloudIcon /><span>Knowledge Dump</span></div><button className="secondary" onClick={() => setLocalCodexOnly(false)}>Return to sign in</button></header><CodexStorageView /></div>;
+  if (!account) return <LoginScreen onOpenLocalCodex={() => setLocalCodexOnly(true)} onAuthenticated={(nextAccount, nextHealth) => { setAccount(nextAccount); setHealth(nextHealth); }} />;
 
   return (
     <div className="app-shell">
@@ -269,7 +294,7 @@ export default function App() {
 
       <main className="workspace">
         <header className="topbar">
-          <div className="search-box"><SearchIcon /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search this folder" disabled={view !== "files" && view !== "archived"} /></div>
+          <div className="search-box"><SearchIcon /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={view === "codex" ? "Codex storage is indexed locally" : "Search this folder"} disabled={view !== "files" && view !== "archived"} /></div>
           <button className={`health-chip ${health?.providerReachable ? "healthy" : "offline"}`} onClick={() => { setView("settings"); void refreshHealth(); }}>
             <span className="pulse-dot" />
             {health?.providerReachable ? "Storage online" : "Check storage"}
@@ -279,7 +304,9 @@ export default function App() {
 
         {error ? <div className="error-banner"><span>{humanError(error)}</span><button onClick={() => setError("")}><CloseIcon /></button></div> : null}
 
-        {view === "settings" ? (
+        {view === "codex" ? (
+          <CodexStorageView />
+        ) : view === "settings" ? (
           <SettingsView health={health} busy={healthBusy} onRefresh={refreshHealth} />
         ) : view === "transfers" ? (
           <TransfersView transfers={transfers} onCancel={cancelTransfer} onRetry={retryTransfer} />
@@ -326,7 +353,196 @@ export default function App() {
   );
 }
 
-function LoginScreen({ onAuthenticated }: { onAuthenticated: (account: Account, health: StorageHealth) => void }) {
+function CodexStorageView() {
+  const nativeAvailable = localCodexAvailable();
+  const [sourcePath, setSourcePath] = useState("");
+  const [collectionPath, setCollectionPath] = useState("");
+  const [restorePath, setRestorePath] = useState("");
+  const [inventory, setInventory] = useState<CodexSourceInventory | null>(null);
+  const [collection, setCollection] = useState<CodexCollectionSummary | null>(null);
+  const [syncResult, setSyncResult] = useState<CodexSyncResult | null>(null);
+  const [verification, setVerification] = useState<CodexVerificationResult | null>(null);
+  const [restore, setRestore] = useState<CodexRestoreResult | null>(null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!nativeAvailable) return;
+    let active = true;
+    void codexStorageDefaults()
+      .then(async (defaults) => {
+        if (!active) return;
+        setSourcePath(defaults.sourceCodexHome);
+        setCollectionPath(defaults.collectionPath);
+        setRestorePath(defaults.restorePath);
+        const [source, existing] = await Promise.all([
+          scanCodexSource(defaults.sourceCodexHome),
+          inspectCodexCollection(defaults.collectionPath).catch(() => null),
+        ]);
+        if (!active) return;
+        setInventory(source);
+        setCollection(existing);
+      })
+      .catch((reason) => active && setError(humanError(messageFor(reason))));
+    return () => { active = false; };
+  }, [nativeAvailable]);
+
+  async function scan() {
+    setBusy("scan");
+    setError("");
+    try {
+      setInventory(await scanCodexSource(sourcePath));
+      await saveCodexStoragePreferences(sourcePath, collectionPath, restorePath);
+    } catch (reason) {
+      setError(humanError(messageFor(reason)));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function chooseDirectory(currentPath: string, assign: (path: string) => void) {
+    setError("");
+    try {
+      const selected = await chooseLocalDirectory(currentPath);
+      if (selected) assign(selected);
+    } catch (reason) {
+      setError(humanError(messageFor(reason)));
+    }
+  }
+
+  async function chooseRestoreParent() {
+    const separator = restorePath.lastIndexOf("/");
+    const parent = separator > 0 ? restorePath.slice(0, separator) : restorePath;
+    const leaf = separator >= 0 ? restorePath.slice(separator + 1) : "codex-knowledge-dump-restore";
+    setError("");
+    try {
+      const selected = await chooseLocalDirectory(parent);
+      if (selected) setRestorePath(`${selected.replace(/\/+$/, "")}/${leaf || "codex-knowledge-dump-restore"}`);
+    } catch (reason) {
+      setError(humanError(messageFor(reason)));
+    }
+  }
+
+  async function refreshCollection() {
+    setBusy("sync");
+    setError("");
+    setVerification(null);
+    setRestore(null);
+    try {
+      const result = await syncCodexCollection(sourcePath, collectionPath);
+      setSyncResult(result);
+      setCollection(result.collection);
+      setInventory(await scanCodexSource(sourcePath));
+      await saveCodexStoragePreferences(sourcePath, collectionPath, restorePath);
+    } catch (reason) {
+      setError(humanError(messageFor(reason)));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function loadCollection() {
+    setBusy("inspect");
+    setError("");
+    try {
+      setCollection(await inspectCodexCollection(collectionPath));
+      await saveCodexStoragePreferences(sourcePath, collectionPath, restorePath);
+    } catch (reason) {
+      setCollection(null);
+      setError(humanError(messageFor(reason)));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function verify() {
+    setBusy("verify");
+    setError("");
+    try {
+      setVerification(await verifyCodexCollection(collectionPath));
+      await saveCodexStoragePreferences(sourcePath, collectionPath, restorePath);
+    } catch (reason) {
+      setVerification(null);
+      setError(humanError(messageFor(reason)));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function prepareRestore() {
+    if (!window.confirm(`Prepare an isolated Codex home at “${restorePath}”? The destination must not already exist.`)) return;
+    setBusy("restore");
+    setError("");
+    setRestore(null);
+    try {
+      setRestore(await restoreCodexCollection(collectionPath, restorePath));
+      await saveCodexStoragePreferences(sourcePath, collectionPath, restorePath);
+    } catch (reason) {
+      setError(humanError(messageFor(reason)));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return <section className="content-view codex-storage-view">
+    <div className="view-heading">
+      <div><p className="eyebrow">Local structured storage</p><h1>Codex workspace</h1><p className="view-intro">Collect the durable parts of your local Codex environment into a plain, refreshable folder before preparing any cloud copy.</p></div>
+      <span className={`local-mode-badge ${nativeAvailable ? "ready" : "unavailable"}`}>{nativeAvailable ? "Native access ready" : "Native app required"}</span>
+    </div>
+
+    {error ? <div className="inline-error codex-storage-error">{error}</div> : null}
+
+    <div className="codex-storage-grid">
+      <article className="codex-storage-card source-card">
+        <div className="section-heading"><div><p className="eyebrow">Step 1</p><h2>Inspect Codex source</h2></div><ArchiveIcon /></div>
+        <p>Knowledge Dump reads only portable session content. Authentication, desktop cookies, logs, caches, and volatile databases are excluded.</p>
+        <label>Codex home<input value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="~/.codex" disabled={!nativeAvailable || Boolean(busy)} /></label>
+        <div className="button-row"><button className="secondary" disabled={!nativeAvailable || Boolean(busy) || !sourcePath.trim()} onClick={() => { void scan(); }}>{busy === "scan" ? "Scanning…" : "Refresh source inventory"}</button></div>
+        {inventory ? <div className="codex-stat-grid">
+          <div><strong>{inventory.activeSessionCount}</strong><span>Active tasks</span></div>
+          <div><strong>{inventory.archivedSessionCount}</strong><span>Archived tasks</span></div>
+          <div><strong>{inventory.fileCount}</strong><span>Portable files</span></div>
+          <div><strong>{formatBytes(inventory.totalBytes)}</strong><span>Source size</span></div>
+        </div> : null}
+      </article>
+
+      <article className="codex-storage-card collection-card">
+        <div className="section-heading"><div><p className="eyebrow">Step 2</p><h2>Create local collection</h2></div><FolderIcon /></div>
+        <p>This is an unencrypted directory. Choose a folder on an encrypted local drive. Running it again adds new files and replaces changed files without rebuilding unchanged content.</p>
+        <label>Collection folder<input value={collectionPath} onChange={(event) => setCollectionPath(event.target.value)} placeholder="/media/your-drive/Knowledge Dump/Codex Workspace" disabled={!nativeAvailable || Boolean(busy)} /></label>
+        <div className="button-row">
+          <button className="secondary" disabled={!nativeAvailable || Boolean(busy)} onClick={() => { void chooseDirectory(collectionPath, setCollectionPath); }}>Choose folder</button>
+          <button className="primary" disabled={!nativeAvailable || Boolean(busy) || !sourcePath.trim() || !collectionPath.trim()} onClick={() => { void refreshCollection(); }}>{busy === "sync" ? "Updating collection…" : collection ? "Update local collection" : "Create local collection"}</button>
+          <button className="secondary" disabled={!nativeAvailable || Boolean(busy) || !collectionPath.trim()} onClick={() => { void loadCollection(); }}>{busy === "inspect" ? "Opening…" : "Open existing"}</button>
+        </div>
+        {syncResult ? <div className="codex-result-strip"><span>{syncResult.addedFiles} added</span><span>{syncResult.updatedFiles} updated</span><span>{syncResult.removedFiles} removed</span><span>{syncResult.unchangedFiles} unchanged</span></div> : null}
+        {collection ? <div className="codex-collection-summary">
+          <div><strong>Collection {collection.collectionId.slice(0, 8)}</strong><span>Updated {new Date(collection.updatedAt).toLocaleString()}</span></div>
+          <div><span>{collection.activeSessionCount + collection.archivedSessionCount} tasks</span><span>{collection.fileCount} files</span><span>{formatBytes(collection.totalBytes)}</span></div>
+          <code>{collection.collectionPath}</code>
+        </div> : <p className="empty-note">No collection has been loaded from this path.</p>}
+      </article>
+
+      <article className="codex-storage-card verify-card">
+        <div className="section-heading"><div><p className="eyebrow">Step 3</p><h2>Verify and test restore</h2></div><CheckIcon /></div>
+        <p>Verification reads every collected file and checks it against the manifest. Restore always creates a separate Codex home and refuses to overwrite the active one.</p>
+        <div className="button-row"><button className="secondary" disabled={!nativeAvailable || Boolean(busy) || !collection} onClick={() => { void verify(); }}>{busy === "verify" ? "Verifying every file…" : "Verify collection"}</button></div>
+        {verification ? <div className="codex-verification"><CheckIcon /><div><strong>Collection verified</strong><span>{verification.fileCount} files · {formatBytes(verification.totalBytes)} · {new Date(verification.checkedAt).toLocaleString()}</span></div></div> : null}
+        <label>Isolated restore destination<input value={restorePath} onChange={(event) => setRestorePath(event.target.value)} placeholder="~/.codex-knowledge-dump-restore" disabled={!nativeAvailable || Boolean(busy)} /></label>
+        <div className="button-row"><button className="secondary" disabled={!nativeAvailable || Boolean(busy)} onClick={() => { void chooseRestoreParent(); }}>Choose destination parent</button><button className="primary" disabled={!nativeAvailable || Boolean(busy) || !collection || !restorePath.trim()} onClick={() => { void prepareRestore(); }}>{busy === "restore" ? "Preparing restore…" : "Prepare test restore"}</button></div>
+        {restore ? <div className="codex-restore-result"><strong>Restored without authentication data</strong><span>Authenticate and inspect the restored task picker with:</span><code>{restore.loginCommand}</code><code>{restore.resumeCommand}</code></div> : null}
+      </article>
+
+      <article className="codex-storage-card future-card">
+        <p className="eyebrow">Next stage</p><h2>Encrypted cloud publication</h2>
+        <p>After this local collection passes a real restore test, Knowledge Dump can encrypt the verified manifest and files client-side and publish that immutable version through the gateway to DigitalOcean Spaces.</p>
+        <span>Cloud upload intentionally deferred</span>
+      </article>
+    </div>
+  </section>;
+}
+
+function LoginScreen({ onAuthenticated, onOpenLocalCodex }: { onAuthenticated: (account: Account, health: StorageHealth) => void; onOpenLocalCodex: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [gateway, setGateway] = useState(currentGatewayUrl());
@@ -363,7 +579,9 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: (account: Account, 
         <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label>
         <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>
         <button className="primary wide" disabled={busy}>{busy ? "Authenticating…" : "Sign in to Knowledge Dump"}</button>
+        <button type="button" className="secondary wide local-storage-entry" disabled={!localCodexAvailable()} onClick={onOpenLocalCodex}>Open local Codex storage</button>
         <small>Accounts are provisioned by the Knowledge Dump gateway operator.</small>
+        {!localCodexAvailable() ? <small>Local Codex storage is available in the native desktop app.</small> : null}
       </form>
     </section>
   </main>;
@@ -372,6 +590,7 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: (account: Account, 
 function Sidebar({ account, view, health, onView, onLogout }: { account: Account; view: View; health: StorageHealth | null; onView: (view: View) => void; onLogout: () => void }) {
   const navigation: Array<[View, string, React.ReactNode]> = [
     ["files", "My dump", <CloudIcon />],
+    ["codex", "Codex storage", <ArchiveIcon />],
     ["recent", "Recent activity", <ActivityIcon />],
     ["archived", "Archive", <ArchiveIcon />],
     ["transfers", "Transfers", <UploadIcon />],
@@ -524,7 +743,7 @@ function initials(value: string): string {
 }
 
 function messageFor(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "unknown_error";
+  return reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "unknown_error";
 }
 
 function humanError(value: string): string {
@@ -542,6 +761,13 @@ function humanError(value: string): string {
     storage_provider_error: "The object storage provider could not complete this operation.",
     download_failed: "The file could not be downloaded from object storage.",
     folder_not_empty: "Move or remove the files in this folder first.",
+    native_desktop_required: "Open Knowledge Dump through its native desktop application to access local Codex files.",
+    codex_source_not_found: "The selected Codex home does not exist or cannot be read.",
+    codex_collection_not_found: "No Knowledge Dump Codex collection was found at that path.",
+    codex_collection_overlaps_source: "The backup collection cannot be stored inside the active Codex home.",
+    codex_restore_active_home_forbidden: "Test restore cannot overwrite or overlap the active Codex home.",
+    codex_restore_destination_exists: "Choose a new restore destination that does not already exist.",
+    codex_restore_destination_overlaps_collection: "The restore destination cannot overlap the backup collection.",
     Failed_to_fetch: "The Knowledge Dump Gateway could not be reached.",
   };
   return known[value] || value.replaceAll("_", " ");

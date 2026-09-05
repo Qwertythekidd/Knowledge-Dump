@@ -126,3 +126,58 @@ export interface ApiError {
   error: string;
   detail?: string;
 }
+
+export interface CodexStorageDefaults {
+  sourceCodexHome: string;
+  collectionPath: string;
+  restorePath: string;
+}
+
+export interface CodexSourceInventory {
+  sourceCodexHome: string;
+  activeSessionCount: number;
+  archivedSessionCount: number;
+  fileCount: number;
+  totalBytes: number;
+  includedCategories: string[];
+  excludedCategories: string[];
+}
+
+export interface CodexCollectionSummary {
+  format: string;
+  collectionId: string;
+  collectionPath: string;
+  sourceCodexHome: string;
+  createdAt: string;
+  updatedAt: string;
+  activeSessionCount: number;
+  archivedSessionCount: number;
+  fileCount: number;
+  totalBytes: number;
+}
+
+export interface CodexSyncResult {
+  collection: CodexCollectionSummary;
+  addedFiles: number;
+  updatedFiles: number;
+  removedFiles: number;
+  unchangedFiles: number;
+}
+
+export interface CodexVerificationResult {
+  verified: boolean;
+  collectionId: string;
+  checkedAt: string;
+  fileCount: number;
+  totalBytes: number;
+}
+
+export interface CodexRestoreResult {
+  restored: boolean;
+  collectionId: string;
+  destinationCodexHome: string;
+  fileCount: number;
+  totalBytes: number;
+  loginCommand: string;
+  resumeCommand: string;
+}

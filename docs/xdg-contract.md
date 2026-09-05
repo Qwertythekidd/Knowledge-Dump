@@ -10,6 +10,7 @@ $XDG_DATA_HOME/knowledge-dump/
   catalog.db
   mock-objects/
   downloads/
+  local-collections/  # default local collection parent
 
 $XDG_CACHE_HOME/knowledge-dump/
   previews/
@@ -30,3 +31,7 @@ encryption keys belong in the Ubuntu Secret Service keyring.
 
 Package code is immutable beneath `/usr/lib/knowledge-dump`. Runtime data must
 never be written beneath `/usr`, the source checkout, or the installed package.
+
+The Codex storage interface permits an explicit absolute collection path so a
+user can place the collection on an encrypted secondary or removable drive.
+When no path is chosen, Knowledge Dump suggests the XDG data location above.

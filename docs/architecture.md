@@ -19,6 +19,12 @@ identity, and client-side encryption in the final implementation. It never
 stores DigitalOcean credentials. The React app is shared between browser
 development and the Tauri/WebKitGTK native shell.
 
+Local structured storage is also a desktop boundary. Codex workspace
+collections are read, refreshed, verified, and restored by native Rust commands
+without passing local paths or unencrypted task content through the gateway.
+The gateway participates only when a future encrypted collection version is
+published to cloud storage.
+
 ## Gateway
 
 The gateway owns user accounts, sessions, safe file metadata, provider

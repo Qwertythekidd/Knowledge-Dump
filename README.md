@@ -15,6 +15,8 @@ The current foundation includes:
 - a PostgreSQL/SQLite account and catalog gateway with secure rotating sessions;
 - shared TypeScript protocol definitions;
 - a Tauri/WebKitGTK native shell scaffold;
+- a plain, refreshable local Codex workspace collection with manifest
+  verification and isolated restore testing;
 - resumable multipart uploads and short-lived DigitalOcean Spaces transfers;
 - Debian packaging and XDG filesystem documentation.
 
@@ -52,5 +54,5 @@ multipart checkpoints. Client-side encryption remains phase 4 work, so
 sensitive archives and secrets must not be uploaded yet.
 
 See [Development](docs/development.md), [Architecture](docs/architecture.md),
-[XDG contract](docs/xdg-contract.md), and the [delivery roadmap](docs/roadmap.md)
-before extending the project.
+[Codex structured storage](docs/codex-storage.md), [XDG contract](docs/xdg-contract.md),
+and the [delivery roadmap](docs/roadmap.md) before extending the project.

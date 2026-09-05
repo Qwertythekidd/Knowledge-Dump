@@ -32,6 +32,10 @@ encrypted manifests, sync cursors, conflict copies, resumable transfers, and
 device recovery. The protocol must version encryption formats before real user
 objects are accepted.
 
+The local half of Codex recovery is implemented as a structured, refreshable
+collection with SHA-256 verification and isolated restore. Publishing that
+collection remains blocked until client-side encryption is complete.
+
 ## Phase 5: native release - packaging prepared
 
 Build and sign the Debian package, add repository/update metadata, harden the
