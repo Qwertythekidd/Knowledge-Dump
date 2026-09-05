@@ -6,7 +6,7 @@ through an independently deployed Knowledge Dump Gateway.
 
 The repository intentionally does not depend on BookOS or its gateway.
 
-## Version 0.1.1
+## Version 0.1.2
 
 The current foundation includes:
 

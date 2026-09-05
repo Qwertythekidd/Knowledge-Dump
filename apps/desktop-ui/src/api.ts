@@ -18,7 +18,9 @@ const GATEWAY_KEY = "knowledge-dump.gateway-url";
 let refreshInFlight: Promise<SessionResponse> | null = null;
 
 function gatewayBase(): string {
-  return (window.localStorage.getItem(GATEWAY_KEY) || import.meta.env.VITE_KNOWLEDGE_DUMP_GATEWAY_URL || "/api").replace(/\/$/, "");
+  const configured = currentGatewayUrl();
+  if (!configured) throw new Error("gateway_not_configured");
+  return configured;
 }
 
 function token(): string {
@@ -89,12 +91,31 @@ export function savedToken(): string {
 
 export function saveGatewayUrl(value: string): void {
   const normalized = value.trim().replace(/\/$/, "");
-  if (normalized) window.localStorage.setItem(GATEWAY_KEY, normalized);
-  else window.localStorage.removeItem(GATEWAY_KEY);
+  if (!normalized) throw new Error("gateway_not_configured");
+  if (normalized !== "/api") {
+    let parsed: URL;
+    try {
+      parsed = new URL(normalized);
+    } catch {
+      throw new Error("gateway_url_invalid");
+    }
+    const localDevelopment = ["127.0.0.1", "localhost", "::1"].includes(parsed.hostname);
+    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && localDevelopment)) {
+      throw new Error("gateway_https_required");
+    }
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new Error("gateway_url_invalid");
+    }
+  }
+  window.localStorage.setItem(GATEWAY_KEY, normalized);
 }
 
 export function currentGatewayUrl(): string {
-  return gatewayBase();
+  const saved = window.localStorage.getItem(GATEWAY_KEY)?.trim();
+  if (saved) return saved.replace(/\/$/, "");
+  const packagedDefault = import.meta.env.VITE_KNOWLEDGE_DUMP_GATEWAY_URL?.trim();
+  if (packagedDefault) return packagedDefault.replace(/\/$/, "");
+  return "__TAURI_INTERNALS__" in window ? "" : "/api";
 }
 
 export async function login(email: string, password: string): Promise<SessionResponse> {

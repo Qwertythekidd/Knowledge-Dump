@@ -544,18 +544,20 @@ function CodexStorageView() {
 }
 
 function LoginScreen({ onAuthenticated, onOpenLocalCodex }: { onAuthenticated: (account: Account, health: StorageHealth) => void; onOpenLocalCodex: () => void }) {
+  const initialGateway = currentGatewayUrl();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [gateway, setGateway] = useState(currentGatewayUrl());
+  const [gateway, setGateway] = useState(initialGateway);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const firstRun = !initialGateway;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError("");
-    saveGatewayUrl(gateway === "/api" ? "" : gateway);
     try {
+      saveGatewayUrl(gateway);
       const authenticated = await login(email, password);
       const health = await storageHealth();
       onAuthenticated(authenticated.account, health);
@@ -574,12 +576,12 @@ function LoginScreen({ onAuthenticated, onOpenLocalCodex }: { onAuthenticated: (
     </section>
     <section className="login-panel">
       <form onSubmit={submit}>
-        <div><p className="eyebrow">Knowledge Dump Gateway</p><h2>Open your dump.</h2><p>Authenticate with your private storage service to continue.</p></div>
+        <div><p className="eyebrow">{firstRun ? "First-time setup" : "Knowledge Dump Gateway"}</p><h2>{firstRun ? "Connect your private storage." : "Open your dump."}</h2><p>{firstRun ? "Enter the HTTPS gateway address provided by your Knowledge Dump administrator, then sign in." : "Authenticate with your private storage service to continue."}</p></div>
         {error ? <div className="login-error">{error}</div> : null}
-        <label>Gateway URL<input value={gateway} onChange={(event) => setGateway(event.target.value)} required /></label>
+        <label>Gateway URL<input type="url" value={gateway} onChange={(event) => setGateway(event.target.value)} placeholder="https://storage.example.com/api" autoComplete="url" required /></label>
         <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label>
         <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>
-        <button className="primary wide" disabled={busy}>{busy ? "Authenticating…" : "Sign in to Knowledge Dump"}</button>
+        <button className="primary wide" disabled={busy}>{busy ? "Authenticating…" : firstRun ? "Connect and sign in" : "Sign in to Knowledge Dump"}</button>
         <button type="button" className="secondary wide local-storage-entry" disabled={!localCodexAvailable()} onClick={onOpenLocalCodex}>Open local Codex storage</button>
         <small>Accounts are provisioned by the Knowledge Dump gateway operator.</small>
         {!localCodexAvailable() ? <small>Local Codex storage is available in the native desktop app.</small> : null}
@@ -763,6 +765,9 @@ function humanError(value: string): string {
     download_failed: "The file could not be downloaded from object storage.",
     folder_not_empty: "Move or remove the files in this folder first.",
     native_desktop_required: "Open Knowledge Dump through its native desktop application to access local Codex files.",
+    gateway_not_configured: "Enter the HTTPS address for your Knowledge Dump Gateway.",
+    gateway_url_invalid: "Enter a valid Knowledge Dump Gateway URL without credentials, a query, or a fragment.",
+    gateway_https_required: "Knowledge Dump Gateway connections must use HTTPS.",
     codex_source_not_found: "The selected Codex home does not exist or cannot be read.",
     codex_collection_not_found: "No Knowledge Dump Codex collection was found at that path.",
     codex_collection_overlaps_source: "The backup collection cannot be stored inside the active Codex home.",

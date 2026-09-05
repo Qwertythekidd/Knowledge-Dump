@@ -32,8 +32,11 @@ if [[ ! "$VERSION" =~ ^[0-9][0-9A-Za-z.+:~-]*$ ]]; then
 fi
 
 cd -- "$ROOT"
-npm run build
-cargo build --locked --manifest-path apps/desktop-native/Cargo.toml --release
+npm run build --workspace @knowledge-dump/protocol
+(
+  cd -- apps/desktop-native
+  "$ROOT/node_modules/.bin/tauri" build --ci --no-bundle
+)
 
 rm -rf -- "$STAGE"
 install -Dm755 apps/desktop-native/target/release/knowledge-dump-desktop "$STAGE/usr/lib/knowledge-dump/knowledge-dump-desktop"
