@@ -139,6 +139,7 @@ export interface CodexSourceInventory {
   archivedSessionCount: number;
   fileCount: number;
   totalBytes: number;
+  workspaceRoots: string[];
   includedCategories: string[];
   excludedCategories: string[];
 }
@@ -154,6 +155,7 @@ export interface CodexCollectionSummary {
   archivedSessionCount: number;
   fileCount: number;
   totalBytes: number;
+  workspaceRoots: string[];
 }
 
 export interface CodexSyncResult {

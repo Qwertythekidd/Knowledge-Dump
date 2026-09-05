@@ -1,10 +1,10 @@
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use uuid::Uuid;
@@ -16,6 +16,8 @@ const MANIFEST_NAME: &str = "manifest.json";
 const PREFERENCES_NAME: &str = "codex-storage.json";
 const CODEX_HOME_DIRECTORY: &str = "codex-home";
 const COPY_BUFFER_BYTES: usize = 1024 * 1024;
+const COPY_STABILITY_ATTEMPTS: usize = 3;
+const SESSION_METADATA_READ_LIMIT: u64 = 1024 * 1024;
 const INCLUDED_DIRECTORIES: &[&str] = &[
     "sessions",
     "archived_sessions",
@@ -49,6 +51,7 @@ pub struct CodexSourceInventory {
     pub archived_session_count: u64,
     pub file_count: u64,
     pub total_bytes: u64,
+    pub workspace_roots: Vec<String>,
     pub included_categories: Vec<String>,
     pub excluded_categories: Vec<String>,
 }
@@ -66,6 +69,7 @@ pub struct CodexCollectionSummary {
     pub archived_session_count: u64,
     pub file_count: u64,
     pub total_bytes: u64,
+    pub workspace_roots: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +117,8 @@ struct SnapshotManifest {
     archived_session_count: u64,
     file_count: u64,
     total_bytes: u64,
+    #[serde(default)]
+    workspace_roots: Vec<String>,
     included_categories: Vec<String>,
     excluded_categories: Vec<String>,
     files: Vec<SnapshotFile>,
@@ -197,12 +203,14 @@ pub fn scan_source(source_path: &str) -> Result<CodexSourceInventory, String> {
     let source_root = require_source_root(source_path)?;
     let files = collect_source_files(&source_root)?;
     let (active_session_count, archived_session_count) = session_counts(&files);
+    let workspace_roots = discover_workspace_roots(&files);
     Ok(CodexSourceInventory {
         source_codex_home: display_path(&source_root),
         active_session_count,
         archived_session_count,
         file_count: files.len() as u64,
         total_bytes: files.iter().map(|item| item.size_bytes).sum(),
+        workspace_roots,
         included_categories: included_categories(),
         excluded_categories: excluded_categories(),
     })
@@ -233,12 +241,14 @@ pub fn sync_collection(
         .unwrap_or_default();
     let sources = collect_source_files(&source_root)?;
     let (active_session_count, archived_session_count) = session_counts(&sources);
+    let workspace_roots = discover_workspace_roots(&sources);
     let mut records = Vec::with_capacity(sources.len());
     let mut added_files = 0_u64;
     let mut updated_files = 0_u64;
     let mut unchanged_files = 0_u64;
 
     for source in sources {
+        let source = source_file(&source_root, &source.source)?;
         let relative = normalized_relative(&source.relative)?;
         let destination = safe_join(&codex_home, &relative)?;
         let previous = existing_files.get(&relative);
@@ -299,6 +309,7 @@ pub fn sync_collection(
         archived_session_count,
         file_count: records.len() as u64,
         total_bytes: records.iter().map(|item| item.size_bytes).sum(),
+        workspace_roots,
         included_categories: included_categories(),
         excluded_categories: excluded_categories(),
         files: records,
@@ -359,11 +370,24 @@ pub fn restore_collection(
     collection_path: &str,
     destination_path: &str,
 ) -> Result<CodexRestoreResult, String> {
+    restore_collection_with_policy(collection_path, destination_path, true)
+}
+
+pub fn restore_default_collection(collection_path: &str) -> Result<CodexRestoreResult, String> {
+    let destination = active_codex_home()?;
+    restore_collection_with_policy(collection_path, &display_path(&destination), false)
+}
+
+fn restore_collection_with_policy(
+    collection_path: &str,
+    destination_path: &str,
+    protect_active_home: bool,
+) -> Result<CodexRestoreResult, String> {
     let collection_root = require_collection_root(collection_path)?;
     let manifest = read_manifest(&collection_root)?;
     let source_codex_home = collection_root.join(CODEX_HOME_DIRECTORY);
     let requested_destination = resolve_user_path(destination_path)?;
-    if requested_destination.exists() {
+    if fs::symlink_metadata(&requested_destination).is_ok() {
         return Err("codex_restore_destination_exists".to_string());
     }
     let destination_name = requested_destination
@@ -378,13 +402,14 @@ pub fn restore_collection(
         .canonicalize()
         .map_err(|_| "codex_restore_parent_create_failed".to_string())?;
     let destination = parent.join(destination_name);
-    // A newly provisioned workstation may not have created ~/.codex yet.
-    let active_codex_home = active_codex_home()?;
-    if destination == active_codex_home
-        || destination.starts_with(&active_codex_home)
-        || active_codex_home.starts_with(&destination)
-    {
-        return Err("codex_restore_active_home_forbidden".to_string());
+    if protect_active_home {
+        let active_codex_home = active_codex_home()?;
+        if destination == active_codex_home
+            || destination.starts_with(&active_codex_home)
+            || active_codex_home.starts_with(&destination)
+        {
+            return Err("codex_restore_active_home_forbidden".to_string());
+        }
     }
     if destination.starts_with(&collection_root) || collection_root.starts_with(&destination) {
         return Err("codex_restore_destination_overlaps_collection".to_string());
@@ -434,7 +459,7 @@ pub fn restore_collection(
         file_count,
         total_bytes,
         login_command: format!("CODEX_HOME={} codex login", quoted_destination),
-        resume_command: format!("CODEX_HOME={} codex resume --all", quoted_destination),
+        resume_command: format!("CODEX_HOME={} codex resume", quoted_destination),
     })
 }
 
@@ -492,31 +517,45 @@ fn copy_source_file(
     fs::create_dir_all(parent)
         .map_err(|_| "codex_collection_directory_create_failed".to_string())?;
     set_private_directory(parent)?;
-    let temporary = parent.join(format!(".knowledge-dump-copy-{}", Uuid::new_v4()));
-    let copied = copy_and_hash(&source.source, &temporary)?;
-    let after = fs::symlink_metadata(&source.source)
-        .map_err(|_| "codex_source_changed_during_sync".to_string())?;
-    if after.len() != source.size_bytes || modified_ns(&after)? != source.modified_ns {
-        let _ = fs::remove_file(&temporary);
-        return Err(format!("codex_source_changed_during_sync:{relative}"));
+    for _ in 0..COPY_STABILITY_ATTEMPTS {
+        let before = fs::symlink_metadata(&source.source)
+            .map_err(|_| "codex_source_changed_during_sync".to_string())?;
+        if !before.file_type().is_file() || before.file_type().is_symlink() {
+            return Err(format!("codex_source_changed_during_sync:{relative}"));
+        }
+        let temporary = parent.join(format!(".knowledge-dump-copy-{}", Uuid::new_v4()));
+        let copied = copy_and_hash(&source.source, &temporary)?;
+        let after = fs::symlink_metadata(&source.source)
+            .map_err(|_| "codex_source_changed_during_sync".to_string())?;
+        let before_modified_ns = modified_ns(&before)?;
+        let stable_copy = after.len() == before.len() && modified_ns(&after)? == before_modified_ns;
+        let stable_append_prefix = is_session_jsonl(relative)
+            && after.len() >= copied.0
+            && file_ends_with_newline(&temporary)?
+            && hash_file_prefix(&source.source, copied.0)? == copied.1;
+        if !stable_copy && !stable_append_prefix {
+            let _ = fs::remove_file(&temporary);
+            continue;
+        }
+        fs::set_permissions(&temporary, private_file_permissions())
+            .map_err(|_| "codex_collection_permissions_failed".to_string())?;
+        fs::rename(&temporary, destination).map_err(|_| {
+            let _ = fs::remove_file(&temporary);
+            "codex_collection_file_finalize_failed".to_string()
+        })?;
+        let snapshot_modified_ns = modified_ns(
+            &fs::symlink_metadata(destination)
+                .map_err(|_| "codex_collection_metadata_failed".to_string())?,
+        )?;
+        return Ok(SnapshotFile {
+            path: relative.to_string(),
+            size_bytes: copied.0,
+            sha256: copied.1,
+            source_modified_ns: before_modified_ns,
+            snapshot_modified_ns,
+        });
     }
-    fs::set_permissions(&temporary, private_file_permissions())
-        .map_err(|_| "codex_collection_permissions_failed".to_string())?;
-    fs::rename(&temporary, destination).map_err(|_| {
-        let _ = fs::remove_file(&temporary);
-        "codex_collection_file_finalize_failed".to_string()
-    })?;
-    let snapshot_modified_ns = modified_ns(
-        &fs::symlink_metadata(destination)
-            .map_err(|_| "codex_collection_metadata_failed".to_string())?,
-    )?;
-    Ok(SnapshotFile {
-        path: relative.to_string(),
-        size_bytes: copied.0,
-        sha256: copied.1,
-        source_modified_ns: source.modified_ns,
-        snapshot_modified_ns,
-    })
+    Err(format!("codex_source_changed_during_sync:{relative}"))
 }
 
 fn copy_snapshot_file(
@@ -594,6 +633,51 @@ fn hash_file(path: &Path) -> Result<String, String> {
         digest.update(&buffer[..read]);
     }
     Ok(format!("{:x}", digest.finalize()))
+}
+
+fn hash_file_prefix(path: &Path, size: u64) -> Result<String, String> {
+    let source = File::open(path).map_err(|_| "codex_file_read_failed".to_string())?;
+    let mut reader = BufReader::with_capacity(COPY_BUFFER_BYTES, source).take(size);
+    let mut digest = Sha256::new();
+    let mut copied = 0_u64;
+    let mut buffer = vec![0_u8; COPY_BUFFER_BYTES];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|_| "codex_file_read_failed".to_string())?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+        copied += read as u64;
+    }
+    if copied != size {
+        return Err("codex_source_changed_during_sync".to_string());
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn file_ends_with_newline(path: &Path) -> Result<bool, String> {
+    let mut file = File::open(path).map_err(|_| "codex_file_read_failed".to_string())?;
+    if file
+        .metadata()
+        .map_err(|_| "codex_file_read_failed".to_string())?
+        .len()
+        == 0
+    {
+        return Ok(true);
+    }
+    file.seek(SeekFrom::End(-1))
+        .map_err(|_| "codex_file_read_failed".to_string())?;
+    let mut last = [0_u8; 1];
+    file.read_exact(&mut last)
+        .map_err(|_| "codex_file_read_failed".to_string())?;
+    Ok(last[0] == b'\n')
+}
+
+fn is_session_jsonl(relative: &str) -> bool {
+    (relative.starts_with("sessions/") || relative.starts_with("archived_sessions/"))
+        && relative.ends_with(".jsonl")
 }
 
 fn target_matches_record(path: &Path, record: &SnapshotFile) -> bool {
@@ -834,6 +918,40 @@ fn session_counts(files: &[SourceFile]) -> (u64, u64) {
     (active, archived)
 }
 
+fn discover_workspace_roots(files: &[SourceFile]) -> Vec<String> {
+    let mut roots = BTreeSet::new();
+    for item in files.iter().filter(|item| {
+        (item.relative.starts_with("sessions") || item.relative.starts_with("archived_sessions"))
+            && item.relative.extension().and_then(|value| value.to_str()) == Some("jsonl")
+    }) {
+        let Ok(file) = File::open(&item.source) else {
+            continue;
+        };
+        let mut sample = String::new();
+        if BufReader::new(file)
+            .take(SESSION_METADATA_READ_LIMIT)
+            .read_to_string(&mut sample)
+            .is_err()
+        {
+            continue;
+        }
+        for line in sample.lines().take(12) {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let cwd = value
+                .pointer("/payload/cwd")
+                .or_else(|| value.get("cwd"))
+                .and_then(|value| value.as_str());
+            if let Some(cwd) = cwd.filter(|cwd| Path::new(cwd).is_absolute()) {
+                roots.insert(cwd.to_string());
+                break;
+            }
+        }
+    }
+    roots.into_iter().collect()
+}
+
 fn read_codex_version(root: &Path) -> Option<String> {
     let value: serde_json::Value =
         serde_json::from_reader(File::open(root.join("version.json")).ok()?).ok()?;
@@ -855,6 +973,7 @@ fn collection_summary(root: &Path, manifest: &SnapshotManifest) -> CodexCollecti
         archived_session_count: manifest.archived_session_count,
         file_count: manifest.file_count,
         total_bytes: manifest.total_bytes,
+        workspace_roots: manifest.workspace_roots.clone(),
     }
 }
 
@@ -970,7 +1089,14 @@ mod tests {
         for path in [&session, &archived, &attachment, &generated] {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
         }
-        fs::write(&session, b"{\"type\":\"session_meta\"}\n").unwrap();
+        fs::write(
+            &session,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"cwd\":{}}}}}\n",
+                serde_json::to_string(&display_path(root)).unwrap()
+            ),
+        )
+        .unwrap();
         fs::write(&archived, b"{\"type\":\"session_meta\"}\n").unwrap();
         fs::write(&attachment, b"context\n").unwrap();
         fs::write(&generated, b"not-a-real-png").unwrap();
@@ -991,6 +1117,10 @@ mod tests {
         let first = sync_collection(&display_path(&source), &display_path(&collection)).unwrap();
         assert_eq!(first.collection.active_session_count, 1);
         assert_eq!(first.collection.archived_session_count, 1);
+        assert_eq!(
+            first.collection.workspace_roots,
+            vec![display_path(temporary.path())]
+        );
         assert_eq!(first.added_files, 5);
         assert!(!collection.join("codex-home/auth.json").exists());
         assert!(collection
@@ -1016,6 +1146,10 @@ mod tests {
             .join("sessions/2026/09/04/rollout-active.jsonl")
             .is_file());
         assert!(!restored.join("auth.json").exists());
+        assert_eq!(
+            result.resume_command,
+            format!("CODEX_HOME='{}' codex resume", display_path(&restored))
+        );
     }
 
     #[test]

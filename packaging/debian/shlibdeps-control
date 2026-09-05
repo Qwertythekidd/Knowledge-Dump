@@ -1,0 +1,9 @@
+Source: knowledge-dump
+Section: utils
+Priority: optional
+Maintainer: Fontaine Tech <support@fontainetech.ai>
+Standards-Version: 4.6.2
+
+Package: knowledge-dump
+Architecture: any
+Description: Native private cloud workspace for Ubuntu

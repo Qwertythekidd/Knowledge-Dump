@@ -1,0 +1,9 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Knowledge Dump
+Source: https://github.com/Qwertythekidd/Knowledge-Dump
+
+Files: *
+Copyright: 2026 Fontaine Tech
+License: Proprietary
+ All rights reserved. Redistribution is permitted only as part of an authorized
+ BookOS installation or under a separate written license from Fontaine Tech.

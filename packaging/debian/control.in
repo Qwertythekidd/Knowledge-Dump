@@ -1,0 +1,13 @@
+Package: knowledge-dump
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Installed-Size: @INSTALLED_SIZE@
+Depends: @SHLIB_DEPS@
+Maintainer: Fontaine Tech <support@fontainetech.ai>
+Homepage: https://github.com/Qwertythekidd/Knowledge-Dump
+Description: Native private cloud workspace for Ubuntu
+ Knowledge Dump provides an account-scoped file library backed by an
+ independently deployed gateway and S3-compatible object storage. It also
+ creates and verifies portable Codex task collections for workstation recovery.

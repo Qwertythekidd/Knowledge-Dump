@@ -59,14 +59,71 @@ cloned separately on the destination workstation.
 5. Run `Verify collection` before treating the copy as recoverable.
 6. Prepare a test restore into a new directory such as
    `~/.codex-knowledge-dump-restore`.
-7. Authenticate that isolated home and open its task picker using the commands
-   shown by Knowledge Dump.
+7. Authenticate that isolated home and open its task picker with `codex resume`
+   using the commands shown by Knowledge Dump.
 8. Clone the relevant Git repository separately and let Codex rebind the task
    to that working directory when prompted.
 
 Restore never writes over the active `~/.codex` directory. This makes the first
 recovery drill reversible and avoids mixing restored task state with the
 currently running desktop environment.
+
+## Fresh-system restoration
+
+After verifying a collection with an isolated restore, install it on a new
+workstation before the first Codex or ChatGPT launch:
+
+```bash
+knowledge-dump codex-storage verify "/media/user/encrypted-drive/Knowledge Dump/Codex Workspace"
+knowledge-dump codex-storage restore-default "/media/user/encrypted-drive/Knowledge Dump/Codex Workspace"
+codex login
+codex resume
+```
+
+`restore-default` writes to the effective `CODEX_HOME`, normally `~/.codex`.
+It verifies every copied file against the collection manifest and renames the
+completed restore into place atomically. It has no overwrite or merge mode and
+fails if the destination already exists, including an existing symbolic link.
+Use `restore-test` instead when Codex has already created a local profile.
+
+The restored files provide the durable task history, task index, selected
+artifacts, rules, skills, and recorded workspace paths. Authentication, desktop
+cookies, browser state, caches, logs, volatile databases, and Git repositories
+are intentionally excluded. Sign in again and clone or restore the referenced
+repositories separately.
+
+## Automatic terminal workflow
+
+The repository includes a wrapper that discovers `CODEX_HOME` (or `~/.codex`),
+uses the remembered Knowledge Dump collection location, and runs the same
+native collection and verification implementation as the desktop interface:
+
+```bash
+npm run codex:storage -- discover
+npm run codex:storage -- collect
+npm run codex:storage -- verify
+```
+
+Pass a destination to `collect` to select a different local collection:
+
+```bash
+npm run codex:storage -- collect "/media/user/encrypted-drive/Knowledge Dump/Codex Workspace"
+```
+
+An installed package exposes the same commands without the development wrapper:
+
+```bash
+knowledge-dump codex-storage discover
+knowledge-dump codex-storage collect
+knowledge-dump codex-storage verify
+knowledge-dump codex-storage restore-default [COLLECTION_PATH]
+```
+
+The collection manifest records every absolute workspace path found in session
+metadata. Whole Git repositories are not copied implicitly: they may contain
+large build directories, ignored credentials, or unrelated data. A later
+workspace-restoration pass can use these references and explicit repository
+metadata to clone or restore each selected workspace safely.
 
 ## Cloud boundary
 

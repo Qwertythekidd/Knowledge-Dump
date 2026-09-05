@@ -6,7 +6,7 @@ through an independently deployed Knowledge Dump Gateway.
 
 The repository intentionally does not depend on BookOS or its gateway.
 
-## Development milestone
+## Version 0.1.1
 
 The current foundation includes:
 
@@ -44,6 +44,24 @@ Run verification with:
 
 ```bash
 npm run check
+```
+
+Build and validate the production Ubuntu package with:
+
+```bash
+npm run build:deb
+```
+
+The resulting `.deb` is a self-contained native desktop release and does not
+require this repository, Node.js, Rust, Python, or a development server on the
+installed workstation. See [Ubuntu packaging](packaging/README.md) and
+[BookOS ISO integration](docs/iso-integration.md).
+
+Discover and update the local Codex structured collection with:
+
+```bash
+npm run codex:storage -- discover
+npm run codex:storage -- collect
 ```
 
 The browser development loop uses the real React client against the account and

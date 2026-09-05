@@ -1,0 +1,44 @@
+.TH KNOWLEDGE-DUMP 1 "September 2026" "Knowledge Dump 0.1.1" "User Commands"
+.SH NAME
+knowledge-dump \- open Knowledge Dump or manage portable Codex context
+.SH SYNOPSIS
+.B knowledge-dump
+.br
+.B knowledge-dump codex-storage
+.RI { discover | collect | verify | restore-test | restore-default }
+.RI [ path ]
+.SH DESCRIPTION
+.B knowledge-dump
+opens the native Knowledge Dump desktop application. The Codex storage commands
+discover, copy, checksum-verify, and restore selected portable Codex task data.
+.SH CODEX STORAGE COMMANDS
+.TP
+.B discover
+Inspect the effective Codex home and selected local collection.
+.TP
+.BI "collect [" COLLECTION_PATH "]"
+Refresh the selected collection from the effective Codex home.
+.TP
+.BI "verify [" COLLECTION_PATH "]"
+Verify every collection file against its manifest checksum.
+.TP
+.BI "restore-test [" DESTINATION_CODEX_HOME "]"
+Restore into a new isolated Codex home without touching the active profile.
+.TP
+.BI "restore-default [" COLLECTION_PATH "]"
+Restore a verified collection into a fresh effective Codex home. This command
+refuses to overwrite or merge an existing destination.
+.SH ENVIRONMENT
+.TP
+.B CODEX_HOME
+Overrides the Codex source or fresh restoration destination. The default is
+.IR ~/.codex .
+.TP
+.BR XDG_CONFIG_HOME , " " XDG_DATA_HOME , " " XDG_CACHE_HOME , " " XDG_STATE_HOME
+Select the standard per-user Knowledge Dump storage locations.
+.SH FILES
+.TP
+.I ~/.config/knowledge-dump/codex-storage.json
+Remembered local Codex collection preferences when XDG_CONFIG_HOME is unset.
+.SH SEE ALSO
+.BR codex (1)

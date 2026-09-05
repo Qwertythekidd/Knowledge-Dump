@@ -193,6 +193,9 @@ h1, h2, h3 { margin: 0; font-family: Manrope, sans-serif; letter-spacing: -.035e
 .codex-stat-grid strong, .codex-stat-grid span { display: block; }
 .codex-stat-grid strong { overflow: hidden; color: var(--green); font: 700 16px Manrope, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .codex-stat-grid span { margin-top: 3px; color: #87928b; font-size: 9px; }
+.codex-workspace-roots { margin-top: 13px; color: #617168; font-size: 10px; }
+.codex-workspace-roots summary { cursor: pointer; font-weight: 700; }
+.codex-workspace-roots code { display: block; overflow-wrap: anywhere; margin-top: 7px; padding: 7px 9px; border-radius: 6px; background: #f2f5f1; font-size: 9px; }
 .codex-result-strip { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
 .codex-result-strip span { padding: 5px 8px; border-radius: 99px; color: #486057; background: #eef3ed; font-size: 9px; font-weight: 700; }
 .codex-collection-summary { display: grid; gap: 10px; margin-top: 17px; padding: 14px; border: 1px solid #dfe6df; border-radius: 10px; background: #fafbf9; }

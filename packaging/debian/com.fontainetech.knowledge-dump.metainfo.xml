@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.fontainetech.knowledge-dump</id>
+  <name>Knowledge Dump</name>
+  <summary>Private cloud storage and portable development context</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>Knowledge Dump is the BookOS workspace for account-scoped cloud files and portable Codex task collections.</p>
+  </description>
+  <launchable type="desktop-id">knowledge-dump.desktop</launchable>
+  <provides>
+    <binary>knowledge-dump</binary>
+  </provides>
+  <developer_name>Fontaine Tech</developer_name>
+  <releases>
+    <release version="0.1.1" date="2026-09-05" />
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>
