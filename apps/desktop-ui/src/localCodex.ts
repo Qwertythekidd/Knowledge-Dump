@@ -73,3 +73,8 @@ export async function restoreCodexCollection(
   requireNative();
   return invoke<CodexRestoreResult>("restore_codex_collection", { collectionPath, destinationPath });
 }
+
+export async function restoreDefaultCodexCollection(collectionPath: string): Promise<CodexRestoreResult> {
+  requireNative();
+  return invoke<CodexRestoreResult>("restore_default_codex_collection", { collectionPath });
+}

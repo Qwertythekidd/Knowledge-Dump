@@ -29,7 +29,7 @@ and runs structural, desktop-entry, AppStream, and headless CLI validation. Run
 validation independently with:
 
 ```bash
-npm run check:deb -- dist/knowledge-dump_0.1.2_amd64.deb
+npm run check:deb -- dist/knowledge-dump_0.1.3_amd64.deb
 ```
 
 The package never imports development state. A new workstation gets empty XDG
@@ -44,8 +44,8 @@ workstation. Verify and install through APT so WebKitGTK dependencies resolve:
 
 ```bash
 cd /path/to/release-directory
-sha256sum --check knowledge-dump_0.1.2_amd64.deb.sha256
-sudo apt install ./knowledge-dump_0.1.2_amd64.deb
+sha256sum --check knowledge-dump_0.1.3_amd64.deb.sha256
+sudo apt install ./knowledge-dump_0.1.3_amd64.deb
 dpkg-query --show --showformat='${Status} ${Version}\n' knowledge-dump
 knowledge-dump codex-storage --help
 gtk-launch knowledge-dump

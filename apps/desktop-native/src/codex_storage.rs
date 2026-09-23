@@ -39,6 +39,7 @@ const INCLUDED_FILES: &[&str] = &[
 #[serde(rename_all = "camelCase")]
 pub struct CodexStorageDefaults {
     pub source_codex_home: String,
+    pub default_codex_home: String,
     pub collection_path: String,
     pub restore_path: String,
 }
@@ -154,11 +155,13 @@ struct CodexStoragePreferences {
 pub fn defaults() -> Result<CodexStorageDefaults, String> {
     let home = home_directory()?;
     let source = active_codex_home()?;
+    let default_codex_home = display_path(&source);
     let data_home = env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".local/share"));
     let defaults = CodexStorageDefaults {
         source_codex_home: display_path(&source),
+        default_codex_home: default_codex_home.clone(),
         collection_path: display_path(
             &data_home.join("knowledge-dump/local-collections/codex-workspace"),
         ),
@@ -169,6 +172,7 @@ pub fn defaults() -> Result<CodexStorageDefaults, String> {
     };
     Ok(CodexStorageDefaults {
         source_codex_home: preferences.source_codex_home,
+        default_codex_home,
         collection_path: preferences.collection_path,
         restore_path: preferences.restore_path,
     })
@@ -194,6 +198,7 @@ pub fn save_preferences(
     write_json_atomically(&path, &preferences, "codex_storage_preferences")?;
     Ok(CodexStorageDefaults {
         source_codex_home: preferences.source_codex_home,
+        default_codex_home: display_path(&active_codex_home()?),
         collection_path: preferences.collection_path,
         restore_path: preferences.restore_path,
     })
@@ -375,6 +380,9 @@ pub fn restore_collection(
 
 pub fn restore_default_collection(collection_path: &str) -> Result<CodexRestoreResult, String> {
     let destination = active_codex_home()?;
+    if fs::symlink_metadata(&destination).is_ok() {
+        return Err("codex_default_home_exists".to_string());
+    }
     restore_collection_with_policy(collection_path, &display_path(&destination), false)
 }
 

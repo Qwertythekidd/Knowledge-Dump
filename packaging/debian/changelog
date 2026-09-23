@@ -1,3 +1,10 @@
+knowledge-dump (0.1.3) stable; urgency=medium
+
+  * Add verified downloaded Codex collection restoration to a fresh workstation.
+  * Refuse to merge with or overwrite an existing Codex profile.
+
+ -- Fontaine Tech <support@fontainetech.ai>  Sun, 06 Sep 2026 14:00:00 -0400
+
 knowledge-dump (0.1.2) stable; urgency=medium
 
   * Embed the production frontend through the Tauri release build pipeline.

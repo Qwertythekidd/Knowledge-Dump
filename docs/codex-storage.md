@@ -64,14 +64,16 @@ cloned separately on the destination workstation.
 8. Clone the relevant Git repository separately and let Codex rebind the task
    to that working directory when prompted.
 
-Restore never writes over the active `~/.codex` directory. This makes the first
-recovery drill reversible and avoids mixing restored task state with the
+Test restore never writes over the active `~/.codex` directory. This makes the
+first recovery drill reversible and avoids mixing restored task state with the
 currently running desktop environment.
 
 ## Fresh-system restoration
 
 After verifying a collection with an isolated restore, install it on a new
-workstation before the first Codex or ChatGPT launch:
+workstation before the first Codex or ChatGPT launch. In the native application,
+choose the downloaded collection folder, select `Open existing`, and then use
+`Restore to this workstation`. The equivalent terminal workflow is:
 
 ```bash
 knowledge-dump codex-storage verify "/media/user/encrypted-drive/Knowledge Dump/Codex Workspace"

@@ -71,6 +71,17 @@ async fn restore_codex_collection(
     .map_err(|_| "codex_restore_worker_failed".to_string())?
 }
 
+#[tauri::command]
+async fn restore_default_codex_collection(
+    collection_path: String,
+) -> Result<codex_storage::CodexRestoreResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        codex_storage::restore_default_collection(&collection_path)
+    })
+    .await
+    .map_err(|_| "codex_restore_worker_failed".to_string())?
+}
+
 fn main() {
     if let Some(exit_code) = run_codex_storage_cli() {
         process::exit(exit_code);
@@ -85,6 +96,7 @@ fn main() {
             inspect_codex_collection,
             verify_codex_collection,
             restore_codex_collection,
+            restore_default_codex_collection,
         ])
         .run(tauri::generate_context!())
         .expect("Knowledge Dump desktop runtime failed");

@@ -39,6 +39,7 @@ import {
   inspectCodexCollection,
   localCodexAvailable,
   restoreCodexCollection,
+  restoreDefaultCodexCollection,
   saveCodexStoragePreferences,
   scanCodexSource,
   syncCodexCollection,
@@ -356,6 +357,7 @@ export default function App() {
 function CodexStorageView() {
   const nativeAvailable = localCodexAvailable();
   const [sourcePath, setSourcePath] = useState("");
+  const [defaultCodexHome, setDefaultCodexHome] = useState("");
   const [collectionPath, setCollectionPath] = useState("");
   const [restorePath, setRestorePath] = useState("");
   const [inventory, setInventory] = useState<CodexSourceInventory | null>(null);
@@ -363,6 +365,7 @@ function CodexStorageView() {
   const [syncResult, setSyncResult] = useState<CodexSyncResult | null>(null);
   const [verification, setVerification] = useState<CodexVerificationResult | null>(null);
   const [restore, setRestore] = useState<CodexRestoreResult | null>(null);
+  const [restoreMode, setRestoreMode] = useState<"test" | "default" | "">("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
@@ -373,6 +376,7 @@ function CodexStorageView() {
       .then(async (defaults) => {
         if (!active) return;
         setSourcePath(defaults.sourceCodexHome);
+        setDefaultCodexHome(defaults.defaultCodexHome);
         setCollectionPath(defaults.collectionPath);
         setRestorePath(defaults.restorePath);
         const [source, existing] = await Promise.all([
@@ -474,10 +478,31 @@ function CodexStorageView() {
     setBusy("restore");
     setError("");
     setRestore(null);
+    setRestoreMode("test");
     try {
       setRestore(await restoreCodexCollection(collectionPath, restorePath));
       await saveCodexStoragePreferences(sourcePath, collectionPath, restorePath);
     } catch (reason) {
+      setError(humanError(messageFor(reason)));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function restoreToThisWorkstation() {
+    if (!window.confirm(
+      `Restore this verified collection to “${defaultCodexHome}”? Close ChatGPT and Codex first. Knowledge Dump will refuse to overwrite an existing Codex home, and authentication data is never restored.`,
+    )) return;
+    setBusy("restore-default");
+    setError("");
+    setRestore(null);
+    setRestoreMode("default");
+    try {
+      setVerification(await verifyCodexCollection(collectionPath));
+      setRestore(await restoreDefaultCodexCollection(collectionPath));
+      await saveCodexStoragePreferences(sourcePath, collectionPath, restorePath);
+    } catch (reason) {
+      setRestoreMode("");
       setError(humanError(messageFor(reason)));
     } finally {
       setBusy("");
@@ -525,13 +550,18 @@ function CodexStorageView() {
       </article>
 
       <article className="codex-storage-card verify-card">
-        <div className="section-heading"><div><p className="eyebrow">Step 3</p><h2>Verify and test restore</h2></div><CheckIcon /></div>
-        <p>Verification reads every collected file and checks it against the manifest. Restore always creates a separate Codex home and refuses to overwrite the active one.</p>
+        <div className="section-heading"><div><p className="eyebrow">Step 3</p><h2>Verify and restore</h2></div><CheckIcon /></div>
+        <p>Verification reads every collected file and checks it against the manifest. You can prepare an isolated test home or install the downloaded context on a fresh workstation.</p>
         <div className="button-row"><button className="secondary" disabled={!nativeAvailable || Boolean(busy) || !collection} onClick={() => { void verify(); }}>{busy === "verify" ? "Verifying every file…" : "Verify collection"}</button></div>
         {verification ? <div className="codex-verification"><CheckIcon /><div><strong>Collection verified</strong><span>{verification.fileCount} files · {formatBytes(verification.totalBytes)} · {new Date(verification.checkedAt).toLocaleString()}</span></div></div> : null}
         <label>Isolated restore destination<input value={restorePath} onChange={(event) => setRestorePath(event.target.value)} placeholder="~/.codex-knowledge-dump-restore" disabled={!nativeAvailable || Boolean(busy)} /></label>
         <div className="button-row"><button className="secondary" disabled={!nativeAvailable || Boolean(busy)} onClick={() => { void chooseRestoreParent(); }}>Choose destination parent</button><button className="primary" disabled={!nativeAvailable || Boolean(busy) || !collection || !restorePath.trim()} onClick={() => { void prepareRestore(); }}>{busy === "restore" ? "Preparing restore…" : "Prepare test restore"}</button></div>
-        {restore ? <div className="codex-restore-result"><strong>Restored without authentication data</strong><span>Authenticate and inspect the restored task picker with:</span><code>{restore.loginCommand}</code><code>{restore.resumeCommand}</code></div> : null}
+        <div className="codex-default-restore">
+          <strong>Install on this workstation</strong>
+          <p>Target: <code>{defaultCodexHome || "~/.codex"}</code>. ChatGPT and Codex must be closed. The target must not exist, so existing local sessions can never be overwritten or merged accidentally.</p>
+          <button className="primary" disabled={!nativeAvailable || Boolean(busy) || !collection} onClick={() => { void restoreToThisWorkstation(); }}>{busy === "restore-default" ? "Verifying and restoring…" : "Restore to this workstation"}</button>
+        </div>
+        {restore ? <div className="codex-restore-result"><strong>{restoreMode === "default" ? "Codex context installed without authentication data" : "Test home restored without authentication data"}</strong><span>{restoreMode === "default" ? "Open ChatGPT and sign in, or authenticate from a terminal with:" : "Authenticate and inspect the restored task picker with:"}</span><code>{restore.loginCommand}</code><code>{restore.resumeCommand}</code></div> : null}
       </article>
 
       <article className="codex-storage-card future-card">
@@ -772,6 +802,7 @@ function humanError(value: string): string {
     codex_collection_not_found: "No Knowledge Dump Codex collection was found at that path.",
     codex_collection_overlaps_source: "The backup collection cannot be stored inside the active Codex home.",
     codex_restore_active_home_forbidden: "Test restore cannot overwrite or overlap the active Codex home.",
+    codex_default_home_exists: "The default Codex home already exists. Close ChatGPT and move or back up that profile before retrying; Knowledge Dump will not merge or overwrite it.",
     codex_restore_destination_exists: "Choose a new restore destination that does not already exist.",
     codex_restore_destination_overlaps_collection: "The restore destination cannot overlap the backup collection.",
     Failed_to_fetch: "The Knowledge Dump Gateway could not be reached.",

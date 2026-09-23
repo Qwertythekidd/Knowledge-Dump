@@ -211,6 +211,11 @@ h1, h2, h3 { margin: 0; font-family: Manrope, sans-serif; letter-spacing: -.035e
 .codex-restore-result { display: grid; gap: 8px; margin-top: 15px; padding: 14px; border: 1px solid #cadacb; border-radius: 10px; background: #f5f8f3; }
 .codex-restore-result strong { font-size: 11px; }
 .codex-restore-result span { color: #718078; font-size: 10px; }
+.codex-default-restore { display: grid; gap: 10px; margin-top: 18px; padding: 14px; border: 1px solid #c8d7c9; border-radius: 10px; background: #f4f8f3; }
+.codex-default-restore strong { color: #24533e; font-size: 11px; }
+.codex-default-restore p { margin: 0; color: #718078; font-size: 10px; line-height: 1.55; }
+.codex-default-restore code { overflow-wrap: anywhere; color: #40534a; font-size: 9px; }
+.codex-default-restore button { justify-self: start; }
 .future-card { color: white; background: linear-gradient(145deg, #194d3c, #123c30); }
 .future-card .eyebrow { color: var(--lime); }
 .future-card > p:not(.eyebrow) { color: #bed0c6; }

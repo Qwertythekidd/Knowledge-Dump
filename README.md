@@ -6,7 +6,7 @@ through an independently deployed Knowledge Dump Gateway.
 
 The repository intentionally does not depend on BookOS or its gateway.
 
-## Version 0.1.2
+## Version 0.1.3
 
 The current foundation includes:
 
@@ -16,7 +16,7 @@ The current foundation includes:
 - shared TypeScript protocol definitions;
 - a Tauri/WebKitGTK native shell scaffold;
 - a plain, refreshable local Codex workspace collection with manifest
-  verification and isolated restore testing;
+  verification, isolated restore testing, and guarded fresh-workstation restore;
 - resumable multipart uploads and short-lived DigitalOcean Spaces transfers;
 - Debian packaging and XDG filesystem documentation.
 

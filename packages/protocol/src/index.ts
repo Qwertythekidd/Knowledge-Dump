@@ -129,6 +129,7 @@ export interface ApiError {
 
 export interface CodexStorageDefaults {
   sourceCodexHome: string;
+  defaultCodexHome: string;
   collectionPath: string;
   restorePath: string;
 }
